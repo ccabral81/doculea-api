@@ -192,13 +192,13 @@ function applyHardSafetyOverride(result: DoculeaResponse, documentText: string, 
     urgency: "high" as const,
   };
 
-  const rest = (result.step_by_step_actions || [])
-    .filter((s) => s.step !== 1)
-    .slice(0, 5)
-    .map((s, idx) => ({ ...s, step: idx + 2 }));
+  type StepAction = { step: number; [key: string]: any };
 
-  result.step_by_step_actions = [safetyStep, ...rest].slice(0, 6);
-  return result;
+const rest = ((result.step_by_step_actions || []) as StepAction[])
+  .filter((s: StepAction) => s.step !== 1)
+  .slice(0, 5)
+  .map((s: StepAction, idx: number) => ({ ...s, step: idx + 2 }));
+
 }
 
 function renumberSteps(result: DoculeaResponse) {
@@ -331,7 +331,7 @@ safety_notes must be a non-empty sentence (>= 20 chars).
     result = renumberSteps(result);
 
     // Apply hard safety overrides (use original text for scam signals)
-    result = applyHardSafetyOverride(result, trimmedText, language);
+    result = applyHardSafetyOverride(result, trimmedText, language) ?? result;
 
     const { bucket, category } = mapOutputToBucket(result);
 
