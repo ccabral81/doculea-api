@@ -17,7 +17,9 @@
     "react-dom": "^18.2.0",
     "sharp": "^0.34.5",
     "tesseract.js": "^5.0.3",
-    "zod": "^3.25.76"
+    "zod": "^3.25.76",
+    "@docu-lea/core": "file:../../packages/core"
+
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
