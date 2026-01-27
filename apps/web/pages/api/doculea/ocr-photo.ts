@@ -1,11 +1,19 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import formidable, { File as FormidableFile } from "formidable";
+import formidable from "formidable";
 import { createWorker } from "tesseract.js";
 import sharp from "sharp";
 
 export const config = {
   api: { bodyParser: false }, // REQUIRED for multipart
 };
+
+type UploadFile = {
+  filepath: string;
+  mimetype?: string | null;
+  originalFilename?: string | null;
+  size?: number;
+};
+
 
 // -----------------------------
 // Deterministic OCR quality gate
@@ -55,10 +63,11 @@ function parseMultipart(req: NextApiRequest): Promise<{ buffer: Buffer; mimetype
   const form = formidable({ multiples: false, maxFileSize: 8 * 1024 * 1024 });
 
   return new Promise((resolve, reject) => {
-    form.parse(req, async (err, _fields, files) => {
+    form.parse(req, async (err: Error | null, _fields: any, files: any) => {
+
       if (err) return reject(err);
 
-      const picked = (files.image ?? files.file) as FormidableFile | FormidableFile[] | undefined;
+      const picked = (files.image ?? files.file) as UploadFile | UploadFile[] | undefined;
       const f = Array.isArray(picked) ? picked[0] : picked;
       if (!f) return reject(new Error("Missing image field (expected 'image')."));
 
