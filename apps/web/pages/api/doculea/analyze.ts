@@ -192,7 +192,7 @@ function applyHardSafetyOverride(result: DoculeaResponse, documentText: string, 
     urgency: "high" as const,
   };
 
-  const rest = (result.step_by_step_actions || [])
+  //const rest = (result.step_by_step_actions || [])
     .filter((s) => s.step !== 1)
     .slice(0, 5)
     .map((s, idx) => ({ ...s, step: idx + 2 }));
