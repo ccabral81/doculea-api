@@ -1,0 +1,12 @@
+{
+  "name": "docu-lea",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev:web": "cd apps/web && npm run dev",
+    "build:web": "cd apps/web && npm run build",
+    "start:web": "cd apps/web && npm run start",
+    "dev:mobile": "cd apps/mobile && npx expo start",
+    "lint": "echo \"Lint handled per app\""
+  }
+}
