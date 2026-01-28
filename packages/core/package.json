@@ -1,1 +1,39 @@
-{"name":"@docu-lea/core","version":"0.1.0","private":true,"dependencies":{"zod":"^4.3.6"}}
+{
+  "name": "@docu-lea/core",
+  "private": true,
+  "version": "0.0.1",
+  "dependencies": {
+    "zod": "^3.25.76"
+  },
+  "exports": {
+    "./prompts/doculeaPrompts": {
+      "types": "./src/prompts/doculeaPrompts.ts",
+      "default": "./src/prompts/doculeaPrompts.ts"
+    },
+    "./schema/doculeaSchema": {
+      "types": "./src/schema/doculeaSchema.ts",
+      "default": "./src/schema/doculeaSchema.ts"
+    },
+    "./safety/doculeaSafety": {
+      "types": "./src/safety/doculeaSafety.ts",
+      "default": "./src/safety/doculeaSafety.ts"
+    },
+    "./mapping/filename": {
+      "types": "./src/mapping/filename.ts",
+      "default": "./src/mapping/filename.ts"
+    },
+    "./mapping/bucketMap": {
+      "types": "./src/mapping/bucketMap.ts",
+      "default": "./src/mapping/bucketMap.ts"
+    }
+  },
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs"
+}

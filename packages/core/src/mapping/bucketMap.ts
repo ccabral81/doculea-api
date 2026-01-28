@@ -1,4 +1,4 @@
-import type { Bucket } from "@docu-lea/core/mapping/filename"
+import type { Bucket } from "./filename"
 
 // Keep this flexible: your schema may be either `legitimacy` or `legitimacy_assessment.status`
 type AnyDocuLeaOutput = Record<string, any>;

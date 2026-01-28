@@ -1,4 +1,4 @@
-import type { DoculeaResponse }from "@docu-lea/core/schema/doculeaSchema";
+import type { DoculeaResponse }from "../schema/doculeaSchema";
 
 /**
  * Detects strong scam indicators in raw text.
