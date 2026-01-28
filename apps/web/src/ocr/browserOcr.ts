@@ -5,17 +5,19 @@ export async function ocrInBrowser(file: File, lang: OcrLang): Promise<string> {
     throw new Error("ocrInBrowser must run in the browser");
   }
 
-  // Dynamic import so Next never bundles this into server code
+  // Dynamic import so Next doesn't bundle into server
   const { createWorker } = await import("tesseract.js");
 
   const langs = lang === "es" ? ["spa", "eng"] : ["eng"];
 
-  const worker: any = await createWorker(langs, {
+  // tesseract.js v5 typings are finicky; cast options to any
+  const worker: any = await createWorker(undefined as any, {
     workerPath: "/tesseract/worker.min.js",
     corePath: "/tesseract/tesseract-core.wasm.js",
     langPath: "/tessdata",
-  });
+  } as any);
 
+  // Ensure correct language is loaded/active
   await worker.reinitialize(langs.join("+"));
 
   const out: any = await worker.recognize(file);
@@ -31,7 +33,8 @@ export function isOcrTextUsable(text: string) {
   const words = t.split(/\s+/).filter(Boolean);
   const wordCount = words.length;
 
-  // very simple gate for MVP
+  // MVP quality gate
   const ok = charCount >= 200 && wordCount >= 40;
+
   return { ok, charCount, wordCount };
 }
