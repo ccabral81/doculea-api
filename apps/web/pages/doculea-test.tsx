@@ -1,5 +1,6 @@
 "use client";
 import React, { useMemo, useState } from "react";
+import { ocrInBrowser, isOcrTextUsable } from "@/ocr/browserOcr";
 
 type Lang = "en" | "es";
 
@@ -143,6 +144,7 @@ export default function DoculeaTestPage() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
+  const [status, setStatus]=useState<string>("");
 
   const canAnalyze = useMemo(() => text.trim().length >= 20, [text]);
 
@@ -229,51 +231,37 @@ async function onPickPhoto(e: React.ChangeEvent<HTMLInputElement>) {
   setPhotoPreviewUrl(URL.createObjectURL(finalFile));
 }
 
-  async function runFromPhoto() {
-  if (typeof window === "undefined") return;
-  if (!photoFile) return;
-
+  async function runFromPhoto(file: File, language: "en" | "es") {
   setLoading(true);
-  setError(null);
-  setResult(null);
+  setStatus("Reading text from photo...");
 
-  try {
-    const form = new FormData();
-    form.append("image", photoFile);
+  const text = await ocrInBrowser(file, language);
+  const q = isOcrTextUsable(text);
 
-    const ocrRes = await fetch("/api/doculea/ocr-photo", { method: "POST", body: form });
-    const ocrRaw = await ocrRes.text();
-    if (!ocrRaw) throw new Error(`Empty OCR response (HTTP ${ocrRes.status})`);
-
-    const ocrJson = JSON.parse(ocrRaw);
-    if (!ocrRes.ok) throw new Error(ocrJson?.error || `OCR failed (HTTP ${ocrRes.status})`);
-
-    setOcrDebug(ocrJson);
-
-    if (!ocrJson.quality?.ok) {
-      const hints = Array.isArray(ocrJson.hints) ? ocrJson.hints.join(" • ") : "Please retake the photo.";
-      throw new Error(`OCR text is too poor. ${hints}`);
-    }
-
-    // ✅ Feed your LOCKED pipeline (unchanged)
-    const r = await fetch("/api/doculea/analyze", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ documentText: ocrJson.text, lang }),
-    });
-
-    const raw = await r.text();
-    if (!raw) throw new Error(`Empty response body (HTTP ${r.status}). Check server logs.`);
-    const json = JSON.parse(raw);
-    if (!r.ok) throw new Error(json?.error || `Request failed (HTTP ${r.status})`);
-
-    setResult(json);
-  } catch (e: any) {
-    setError(e?.message || "Unknown error");
-  } finally {
+  if (!q.ok) {
     setLoading(false);
+    setStatus("");
+    throw new Error(
+      `OCR was too weak (chars=${q.charCount}, words=${q.wordCount}). Please retake: closer, brighter, flat angle, avoid glare.`
+    );
   }
+
+  setStatus("Analyzing document...");
+
+  const resp = await fetch("/api/doculea/analyze", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, language }),
+  });
+
+  const json = await resp.json();
+  if (!resp.ok) throw new Error(json?.error || "Analyze failed");
+
+  setResult(json);
+  setLoading(false);
+  setStatus("");
 }
+
 
   return (
     <div style={{ minHeight: "100vh", background: "#f8fafc" }}>
@@ -341,7 +329,10 @@ async function onPickPhoto(e: React.ChangeEvent<HTMLInputElement>) {
 
   <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
     <button
-      onClick={runFromPhoto}
+      onClick={()=>{
+        if (!photoFile) return;
+        runFromPhoto(photoFile, lang);
+      }}
       disabled={!photoFile || loading}
       style={{
         border: "1px solid #e5e7eb",

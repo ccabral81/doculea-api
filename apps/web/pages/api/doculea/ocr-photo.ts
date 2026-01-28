@@ -95,7 +95,7 @@ async function getWorker(): Promise<Worker> {
       console.log("OCR DEPLOY MARKER", "v2-public-core-apply-options");
       console.log("OCR corePath =", options.corePath);
 
-      // tesseract.js@5.1.1 typings vary; cast to any to ensure options are used
+          // tesseract.js@5.1.1 typings vary; cast to any to ensure options are used
       const w = (await createWorker(["eng", "spa"], options)) as unknown as Worker;
 
       // v5 uses reinitialize in typings
@@ -112,6 +112,11 @@ async function getWorker(): Promise<Worker> {
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+  if (process.env.DISABLE_SERVER_OCR ==="1"){
+          return res.status(501).json({
+            error: "Server OCR is disabled in production. Use client-side OCR.", 
+          });
+        }
 
   try {
     const { buffer, mimetype, filename } = await parseMultipart(req);
