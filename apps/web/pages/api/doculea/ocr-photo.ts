@@ -6,7 +6,7 @@ import sharp from "sharp";
 import path from "path";
 
 export const config = {
-  api: { bodyParser: false }, // REQUIRED for multipart
+  api: { bodyParser: false },
 };
 
 type UploadFile = {
@@ -16,50 +16,6 @@ type UploadFile = {
   size?: number;
 };
 
-// -----------------------------
-// Deterministic OCR quality gate
-// -----------------------------
-function scoreOcrText(raw: string) {
-  const text = (raw || "").trim();
-
-  const charCount = text.length;
-  const words = text.split(/\s+/).filter(Boolean);
-  const wordCount = words.length;
-
-  const printable = text.replace(/[^\x20-\x7E\n\r\t]/g, "");
-  const printableRatio = charCount === 0 ? 0 : printable.length / charCount;
-
-  const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
-  const lineCount = lines.length;
-
-  const oneCharWords = words.filter((w) => w.length === 1).length;
-  const oneCharRatio = wordCount === 0 ? 1 : oneCharWords / wordCount;
-
-  let score = 0;
-  score += Math.min(charCount / 1200, 1) * 0.45;
-  score += Math.min(wordCount / 250, 1) * 0.25;
-  score += printableRatio * 0.2;
-  score += Math.min(lineCount / 30, 1) * 0.1;
-
-  const reasons: string[] = [];
-  if (charCount < 200) reasons.push("too_short");
-  if (wordCount < 40) reasons.push("too_few_words");
-  if (printableRatio < 0.85) reasons.push("noisy_text");
-  if (oneCharRatio > 0.25) reasons.push("likely_bad_ocr");
-
-  const ok = reasons.length === 0 && score >= 0.55;
-
-  const hints: string[] = [];
-  if (charCount < 200 || wordCount < 40) hints.push("Move closer so text fills the frame");
-  if (printableRatio < 0.85) hints.push("Increase lighting and avoid glare");
-  if (oneCharRatio > 0.25) hints.push("Hold the phone flat (avoid angle/tilt)");
-
-  return { ok, score: Number(score.toFixed(2)), reasons, hints, text };
-}
-
-// ---------------
-// Timeout helper
-// ---------------
 function withTimeout<T>(p: Promise<T>, ms: number, label = "operation"): Promise<T> {
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
@@ -73,16 +29,39 @@ function withTimeout<T>(p: Promise<T>, ms: number, label = "operation"): Promise
   });
 }
 
-// ---------------
-// Multipart parser (typed)
-// ---------------
+function scoreOcrText(raw: string) {
+  const text = (raw || "").trim();
+  const charCount = text.length;
+  const words = text.split(/\s+/).filter(Boolean);
+  const wordCount = words.length;
+
+  const printable = text.replace(/[^\x20-\x7E\n\r\t]/g, "");
+  const printableRatio = charCount === 0 ? 0 : printable.length / charCount;
+
+  const oneCharWords = words.filter((w) => w.length === 1).length;
+  const oneCharRatio = wordCount === 0 ? 1 : oneCharWords / wordCount;
+
+  const ok =
+    charCount >= 200 &&
+    wordCount >= 40 &&
+    printableRatio >= 0.85 &&
+    oneCharRatio <= 0.25;
+
+  const hints: string[] = [];
+  if (charCount < 200 || wordCount < 40) hints.push("Move closer so text fills the frame");
+  if (printableRatio < 0.85) hints.push("Increase lighting and avoid glare");
+  if (oneCharRatio > 0.25) hints.push("Hold the phone flat (avoid angle/tilt)");
+
+  return { ok, text, score: Number(((charCount / 1200) * 0.6 + printableRatio * 0.4).toFixed(2)), hints };
+}
+
 function parseMultipart(
   req: NextApiRequest
 ): Promise<{ buffer: Buffer; mimetype?: string; filename?: string }> {
   const form = formidable({ multiples: false, maxFileSize: 8 * 1024 * 1024 });
 
   return new Promise((resolve, reject) => {
-    form.parse(req, async (err: Error | null, _fields: any, files: any) => {
+    form.parse(req, async (err: any, _fields: any, files: any) => {
       if (err) return reject(err);
 
       const picked = (files.image ?? files.file) as UploadFile | UploadFile[] | undefined;
@@ -101,41 +80,36 @@ function parseMultipart(
   });
 }
 
-// -------------------------
-// Tesseract worker (cached + mutex)
-// -------------------------
+// Cache worker + serialize OCR calls (serverless safety)
 let workerPromise: Promise<Worker> | null = null;
 let ocrMutex: Promise<any> = Promise.resolve();
 
 async function getWorker(): Promise<Worker> {
   if (!workerPromise) {
     workerPromise = (async () => {
-      // IMPORTANT: use the signature that matches your installed typings:
-      // createWorker(langs, options)
-      const w = await createWorker("eng+spa", {
-        // Serverless-safe: point to concrete assets
+      // tesseract.js@5.1.1 typings are picky — use `any` for options
+      const options: any = {
         workerPath: require.resolve("tesseract.js/dist/worker.min.js"),
+        // Force non-SIMD core to avoid missing simd wasm on Vercel
         corePath: require.resolve("tesseract.js-core/tesseract-core.wasm.js"),
-
-        // Traineddata served from /public
+        // Traineddata must exist in apps/web/public/tessdata
         langPath: path.join(process.cwd(), "public", "tessdata"),
-      } as any);
+      };
 
-      // Your typings show `reinitialize` exists, but not `initialize/loadLanguage`.
-      // This ensures the language is active.
+      // v5 supports createWorker, but TS signature varies; pass langs later via reinitialize
+      const w = (await createWorker(options)) as unknown as Worker;
+
+      // v5 Worker uses reinitialize, not initialize/loadLanguage (per your TS errors)
       await w.reinitialize("eng+spa");
 
-      // Optional stability
-      await (w as any).setParameters?.({
-        preserve_interword_spaces: "1",
-      });
+      // Optional: improve spacing stability
+      await (w as any).setParameters?.({ preserve_interword_spaces: "1" });
 
-      return w as unknown as Worker;
+      return w;
     })();
   }
   return workerPromise;
 }
-
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
@@ -143,19 +117,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   try {
     const { buffer, mimetype, filename } = await parseMultipart(req);
 
-    // 1) Reject unsupported formats early (HEIC/HEIF)
+    // Reject HEIC/HEIF early (your current pipeline doesn't support server-side HEIC reliably)
     if (mimetype && /heic|heif/i.test(mimetype)) {
       return res.status(400).json({
         error:
-          "HEIC images are not supported yet. Please retake the photo with iPhone camera setting 'Most Compatible' (JPEG).",
+          "HEIC images are not supported yet. On iPhone: Settings → Camera → Formats → Most Compatible (JPEG), then retake.",
+        debug: { mimetype, filename },
       });
     }
 
-    // 2) Normalize to PNG so Tesseract can always read it
+    // Normalize image to PNG for Tesseract
     let processed: Buffer;
     try {
       processed = await sharp(buffer)
-        .rotate() // respect EXIF
+        .rotate()
         .grayscale()
         .normalize()
         .resize({ width: 1800, withoutEnlargement: true })
@@ -168,19 +143,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       });
     }
 
-    // 3) Serialize OCR calls (prevents concurrent worker issues)
     const run = async () => {
-      const worker = await getWorker();
+      const w = await getWorker();
 
       // HARD TIMEOUT so Vercel doesn't hang until 300s
-      const out = await withTimeout(worker.recognize(processed), 45_000, "OCR");
+      const out: any = await withTimeout((w as any).recognize(processed), 45_000, "OCR");
+      const rawText = (out && out.data && out.data.text) ? String(out.data.text) : "";
 
-      const rawText = out?.data?.text || "";
       const scored = scoreOcrText(rawText);
 
       return res.status(200).json({
         text: scored.text,
-        quality: { ok: scored.ok, score: scored.score, reasons: scored.reasons },
+        quality: { ok: scored.ok, score: scored.score },
         hints: scored.hints,
       });
     };

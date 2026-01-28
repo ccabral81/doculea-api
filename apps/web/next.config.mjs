@@ -11,10 +11,11 @@ const config = {
   // it’s not required. Leaving it doesn't hurt.)
   transpilePackages: ["@docu-lea/core"],
 
-  webpack: (cfg) => {
-    cfg.experiments = { ...(cfg.experiments || {}), asyncWebAssembly: true };
-    return cfg;
-  },
+webpack: (cfg) => {
+  cfg.experiments = { ...(cfg.experiments || {}), asyncWebAssembly: true };
+  return cfg;
+},
+
 };
 
 export default config;
