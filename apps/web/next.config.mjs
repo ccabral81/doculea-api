@@ -7,8 +7,15 @@ const config = {
     externalDir: true,
   },
 
-  // ✅ Tells Next/SWC to transpile this workspace package (TS -> JS)
+  // (You can keep this, but since you’re currently using relative imports from packages/core/src,
+  // it’s not required. Leaving it doesn't hurt.)
   transpilePackages: ["@docu-lea/core"],
+
+  webpack: (cfg) => {
+    cfg.experiments = { ...(cfg.experiments || {}), asyncWebAssembly: true };
+    return cfg;
+  },
 };
 
 export default config;
+
