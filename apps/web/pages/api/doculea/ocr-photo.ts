@@ -41,23 +41,17 @@ function scoreOcrText(raw: string) {
   const oneCharWords = words.filter((w) => w.length === 1).length;
   const oneCharRatio = wordCount === 0 ? 1 : oneCharWords / wordCount;
 
-  const ok =
-    charCount >= 200 &&
-    wordCount >= 40 &&
-    printableRatio >= 0.85 &&
-    oneCharRatio <= 0.25;
+  const ok = charCount >= 200 && wordCount >= 40 && printableRatio >= 0.85 && oneCharRatio <= 0.25;
 
   const hints: string[] = [];
   if (charCount < 200 || wordCount < 40) hints.push("Move closer so text fills the frame");
   if (printableRatio < 0.85) hints.push("Increase lighting and avoid glare");
   if (oneCharRatio > 0.25) hints.push("Hold the phone flat (avoid angle/tilt)");
 
-  return { ok, text, score: Number(((charCount / 1200) * 0.6 + printableRatio * 0.4).toFixed(2)), hints };
+  return { ok, score: Number(((Math.min(charCount / 1200, 1) * 0.6) + printableRatio * 0.4).toFixed(2)), hints, text };
 }
 
-function parseMultipart(
-  req: NextApiRequest
-): Promise<{ buffer: Buffer; mimetype?: string; filename?: string }> {
+function parseMultipart(req: NextApiRequest): Promise<{ buffer: Buffer; mimetype?: string; filename?: string }> {
   const form = formidable({ multiples: false, maxFileSize: 8 * 1024 * 1024 });
 
   return new Promise((resolve, reject) => {
@@ -80,29 +74,32 @@ function parseMultipart(
   });
 }
 
-// Cache worker + serialize OCR calls (serverless safety)
+// Cache worker + serialize OCR calls (important in serverless)
 let workerPromise: Promise<Worker> | null = null;
 let ocrMutex: Promise<any> = Promise.resolve();
 
 async function getWorker(): Promise<Worker> {
   if (!workerPromise) {
     workerPromise = (async () => {
-      // tesseract.js@5.1.1 typings are picky — use `any` for options
-const base =
-  process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000";
+      // Base URL for fetching worker/wasm from /public (works in Vercel + local)
+      const base =
+        process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000";
 
-const options: any = {
-  workerPath: `${base}/tesseract/worker.min.js`,
-  corePath: `${base}/tesseract/tesseract-core.wasm.js`,
-  langPath: path.join(process.cwd(), "public", "tessdata"),
-};
+      // IMPORTANT: point to NON-SIMD core hosted in /public to avoid /var/task ENOENT
+      const options: any = {
+        workerPath: `${base}/tesseract/worker.min.js`,
+        corePath: `${base}/tesseract/tesseract-core.wasm.js`,
+        // traineddata must be in apps/web/public/tessdata
+        langPath: path.join(process.cwd(), "public", "tessdata"),
+      };
 
-const w = (await createWorker(options)) as unknown as Worker;
-await w.reinitialize("eng+spa");
+      // tesseract.js@5.1.1 typings vary; cast to any to ensure options are used
+      const w = (await createWorker("eng+spa", options as any)) as unknown as Worker;
 
+      // v5 uses reinitialize in typings
+      await w.reinitialize("eng+spa");
 
-
-      // Optional: improve spacing stability
+      // Optional stability
       await (w as any).setParameters?.({ preserve_interword_spaces: "1" });
 
       return w;
@@ -117,7 +114,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   try {
     const { buffer, mimetype, filename } = await parseMultipart(req);
 
-    // Reject HEIC/HEIF early (your current pipeline doesn't support server-side HEIC reliably)
+    // HEIC/HEIF early rejection
     if (mimetype && /heic|heif/i.test(mimetype)) {
       return res.status(400).json({
         error:
@@ -144,10 +141,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     const run = async () => {
-      const w = await getWorker();
+      const worker = await getWorker();
 
-      // HARD TIMEOUT so Vercel doesn't hang until 300s
-      const out: any = await withTimeout((w as any).recognize(processed), 45_000, "OCR");
+      // Hard timeout so Vercel doesn’t hang to 300s
+      const out: any = await withTimeout((worker as any).recognize(processed), 45_000, "OCR");
       const rawText = (out && out.data && out.data.text) ? String(out.data.text) : "";
 
       const scored = scoreOcrText(rawText);
