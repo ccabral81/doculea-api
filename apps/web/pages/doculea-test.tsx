@@ -33,6 +33,31 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+async function normalizeToJpegIfHeic(file: File): Promise<File> {
+  const isHeic =
+    file.type === "image/heic" ||
+    file.type === "image/heif" ||
+    file.name.toLowerCase().endsWith(".heic") ||
+    file.name.toLowerCase().endsWith(".heif");
+
+  if (!isHeic) return file;
+
+  if (typeof window === "undefined") {
+    throw new Error("HEIC conversion must run in the browser");
+  }
+
+  const heic2any = (await import("heic2any")).default;
+
+  const converted = (await heic2any({
+    blob: file,
+    toType: "image/jpeg",
+    quality: 0.92,
+  })) as Blob;
+
+  return new File([converted], file.name.replace(/\.(heic|heif)$/i, ".jpg"), {
+    type: "image/jpeg",
+  });
+}
 
 
 function StepCard({ step }: { step: any }) {
@@ -233,34 +258,41 @@ async function onPickPhoto(e: React.ChangeEvent<HTMLInputElement>) {
 
   async function runFromPhoto(file: File, language: "en" | "es") {
   setLoading(true);
+  setStatus("Preparing photo...");
+
+  const normalized = await normalizeToJpegIfHeic(file);
+
   setStatus("Reading text from photo...");
+  const text = await ocrInBrowser(normalized, language);
 
-  const text = await ocrInBrowser(file, language);
   const q = isOcrTextUsable(text);
-
   if (!q.ok) {
     setLoading(false);
     setStatus("");
     throw new Error(
-      `OCR was too weak (chars=${q.charCount}, words=${q.wordCount}). Please retake: closer, brighter, flat angle, avoid glare.`
+      `OCR was too weak (chars=${q.charCount}, words=${q.wordCount}). Retake photo: closer, brighter, avoid glare.`
     );
   }
 
   setStatus("Analyzing document...");
-
   const resp = await fetch("/api/doculea/analyze", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, language }),
+    body: JSON.stringify({ text: text.trim(), language }),
   });
 
   const json = await resp.json();
-  if (!resp.ok) throw new Error(json?.error || "Analyze failed");
+  if (!resp.ok) {
+    setLoading(false);
+    setStatus("");
+    throw new Error(json?.error || `Analyze failed (${resp.status})`);
+  }
 
   setResult(json);
   setLoading(false);
   setStatus("");
 }
+
 
 
   return (
