@@ -92,9 +92,11 @@ async function getWorker(): Promise<Worker> {
         // traineddata must be in apps/web/public/tessdata
         langPath: path.join(process.cwd(), "public", "tessdata"),
       };
+      console.log("OCR DEPLOY MARKER", "v2-public-core-apply-options");
+      console.log("OCR corePath =", options.corePath);
 
       // tesseract.js@5.1.1 typings vary; cast to any to ensure options are used
-      const w = (await createWorker("eng+spa", options as any)) as unknown as Worker;
+      const w = (await createWorker(["eng", "spa"], options)) as unknown as Worker;
 
       // v5 uses reinitialize in typings
       await w.reinitialize("eng+spa");

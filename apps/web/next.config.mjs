@@ -13,8 +13,12 @@ const config = {
 
 webpack: (cfg) => {
   cfg.experiments = { ...(cfg.experiments || {}), asyncWebAssembly: true };
+
+  // Prevent Next from trying to bundle/transform tesseract internals too aggressively
+  cfg.externals = cfg.externals || [];
   return cfg;
 },
+
 
 };
 
