@@ -88,19 +88,19 @@ async function getWorker(): Promise<Worker> {
   if (!workerPromise) {
     workerPromise = (async () => {
       // tesseract.js@5.1.1 typings are picky — use `any` for options
-      const options: any = {
-        workerPath: require.resolve("tesseract.js/dist/worker.min.js"),
-        // Force non-SIMD core to avoid missing simd wasm on Vercel
-        corePath: require.resolve("tesseract.js-core/tesseract-core.wasm.js"),
-        // Traineddata must exist in apps/web/public/tessdata
-        langPath: path.join(process.cwd(), "public", "tessdata"),
-      };
+const base =
+  process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000";
 
-      // v5 supports createWorker, but TS signature varies; pass langs later via reinitialize
-      const w = (await createWorker(options)) as unknown as Worker;
+const options: any = {
+  workerPath: `${base}/tesseract/worker.min.js`,
+  corePath: `${base}/tesseract/tesseract-core.wasm.js`,
+  langPath: path.join(process.cwd(), "public", "tessdata"),
+};
 
-      // v5 Worker uses reinitialize, not initialize/loadLanguage (per your TS errors)
-      await w.reinitialize("eng+spa");
+const w = (await createWorker(options)) as unknown as Worker;
+await w.reinitialize("eng+spa");
+
+
 
       // Optional: improve spacing stability
       await (w as any).setParameters?.({ preserve_interword_spaces: "1" });

@@ -1,0 +1,8 @@
+{
+  "headers": [
+    {
+      "source": "/tesseract/(.*)\\.wasm",
+      "headers": [{ "key": "Content-Type", "value": "application/wasm" }]
+    }
+  ]
+}
