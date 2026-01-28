@@ -8,7 +8,7 @@ import { mapOutputToBucket } from "../../../../../packages/core/src/mapping/buck
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-//const DEBUG = process.env.NODE_ENV !== "production";
+const DEBUG = process.env.NODE_ENV !== "production";
 
 // Hard limits
 const MAX_CHARS = 20000; // protect cost/perf
