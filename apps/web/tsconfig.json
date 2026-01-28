@@ -1,6 +1,6 @@
 {
   "compilerOptions": {
-    "baseUrl": ".",
+   // "baseUrl": ".",
     "target": "ES2017",
     "lib": [
       "dom",
@@ -19,7 +19,7 @@
     "jsx": "preserve",
     "incremental": true,
     "paths": {
-      "@docu-lea/core/*":["../../packages/core/src/*"],
+      //"@docu-lea/core/*":["../../packages/core/src/*"],
       "@/*": [
         "./src/*"
       ]
@@ -29,9 +29,7 @@
     "next-env.d.ts",
     "**/*.ts",
     "**/*.tsx",
-    ".next/types/**/*.ts",
-    ".next/dev/types/**/*.ts",
-    "**/*.mts"
+    "**/*.mts"    
   ],
   "exclude": [
     "node_modules"
