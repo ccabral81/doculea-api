@@ -23,7 +23,6 @@ const OPENAI_MAX_TOKENS = 800;
 
 // ---------- utils ----------
 
-// Generic timeout wrapper that preserves the promise type (works with OpenAI's APIPromise too)
 function withTimeout<T>(promise: PromiseLike<T>, ms: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("OpenAI request timed out")), ms);
@@ -45,12 +44,10 @@ function clipToMaxChars(s: string, maxChars: number) {
   return s.slice(0, maxChars);
 }
 
-// Simple local “condense” strategy: keep header + tail + middle windows (no extra model calls)
 function condenseTextLocal(input: string, targetChars: number) {
   const t = (input || "").trim();
   if (t.length <= targetChars) return t;
 
-  // Keep first 1200, last 1200, and a middle slice around the 50% mark
   const head = t.slice(0, 1200);
   const tail = t.slice(Math.max(0, t.length - 1200));
   const midStart = Math.max(0, Math.floor(t.length * 0.5) - 550);
@@ -60,7 +57,6 @@ function condenseTextLocal(input: string, targetChars: number) {
   return joined.slice(0, targetChars);
 }
 
-// Ensure steps are 1..N and limited (schema already enforces, but keep deterministic)
 function renumberSteps(result: DoculeaResponse): DoculeaResponse {
   type StepAction = DoculeaResponse["step_by_step_actions"][number];
 
@@ -71,16 +67,38 @@ function renumberSteps(result: DoculeaResponse): DoculeaResponse {
   return result;
 }
 
+function normalizeLang(input: unknown): "en" | "es" {
+  if (input === "es" || input === "spanish") return "es";
+  return "en";
+}
+
+function pickDocumentText(body: any): string | undefined {
+  // Accept both old + new payload shapes
+  return (
+    body?.documentText ??
+    body?.text ??
+    body?.rawText ??
+    body?.document_text ??
+    body?.document_text_raw
+  );
+}
+
 // ---------- handler ----------
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
   try {
-    const { documentText, lang } = req.body as { documentText?: string; lang?: "en" | "es" };
+    const body = (req.body ?? {}) as any;
+
+    const documentText = pickDocumentText(body);
+    const lang = body?.lang ?? body?.language;
 
     if (!documentText || typeof documentText !== "string") {
-      return res.status(400).json({ error: "documentText is required." });
+      return res.status(400).json({
+        error: "documentText is required.",
+        hint: "Send { documentText, lang } (old) or { text, language } (new).",
+      });
     }
 
     const trimmedText = documentText.trim();
@@ -89,7 +107,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(400).json({ error: "Text is too short. Please provide more of the document." });
     }
 
-    const language: "en" | "es" = lang === "es" ? "es" : "en";
+    const language: "en" | "es" = normalizeLang(lang);
 
     // Long-doc handling: condense locally; do NOT change AI logic.
     let textForAI = trimmedText;
@@ -129,40 +147,25 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const parsed = DoculeaResponseSchema.safeParse(json);
     if (!parsed.success) {
       if (DEBUG) {
-        return res.status(500).json({
-          error: "AI output failed schema validation.",
-          issues: parsed.error.issues,
-          raw,
-        });
+        return res.status(500).json({ error: "AI output failed schema validation.", details: parsed.error.format() });
       }
       return res.status(500).json({ error: "AI output failed schema validation." });
     }
 
-    let result: DoculeaResponse = parsed.data as DoculeaResponse;
+    let result = parsed.data as DoculeaResponse;
 
-    // Guard minimum steps (schema already enforces, but keep explicit)
     if (!result.step_by_step_actions || result.step_by_step_actions.length < 2) {
       return res.status(500).json({ error: "AI output missing minimum step-by-step actions." });
     }
 
-    // Normalize step numbering
     result = renumberSteps(result);
 
     // Apply hard safety overrides (use original text for scam signals)
-    // (TS-safe fallback in case of typing drift)
-    result = applyHardSafetyOverride(result, trimmedText, language) ?? result;
+    result = applyHardSafetyOverride(result, trimmedText, language);
 
-    // Bucket mapping
     const { bucket, category } = mapOutputToBucket(result);
 
-    // Attach bucket/category for downstream usage (if you already do)
-    // If your schema does not allow these fields, remove this block.
-    // (Leaving as-is if you were already returning it.)
-    return res.status(200).json({
-      ...result,
-      bucket,
-      bucket_category: category,
-    });
+    return res.status(200).json({ ...result, bucket, category });
   } catch (err: any) {
     if (err?.message === "OpenAI request timed out") {
       return res.status(504).json({ error: "The analysis took too long. Please try again." });
