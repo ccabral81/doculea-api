@@ -391,6 +391,14 @@ export default function DoculeaTestPage() {
   // ✅ Critical: remember last photo for retry
   const lastPhotoRef = useRef<File | null>(null);
   const lastModeRef = useRef<"photo" | "text">("photo");
+  const [onboardingSpeakOn, setOnboardingSpeakOn] = useState(true);
+
+function onboardingVoiceLine(l: Lang) {
+  return l === "es"
+    ? "Perfecto. Voy a leer el resumen en voz alta."
+    : "Great. I will read the summary out loud.";
+}
+
 
   useEffect(() => {
     const stored = getStoredLang();
@@ -405,6 +413,15 @@ export default function DoculeaTestPage() {
     const speakStored = getStoredSpeak();
     if (speakStored === null) setSpeakOn(true);
     else setSpeakOn(speakStored);
+
+    if (speakStored === null) {
+  setSpeakOn(true);
+  setOnboardingSpeakOn(true);
+} else {
+  setSpeakOn(speakStored);
+  setOnboardingSpeakOn(speakStored);
+}
+
   }, []);
 
   useEffect(() => {
@@ -414,6 +431,8 @@ export default function DoculeaTestPage() {
   useEffect(() => {
     setStoredSpeak(speakOn);
   }, [speakOn]);
+
+  
 
   const canAnalyze = useMemo(() => text.trim().length >= 20, [text]);
   const loading = step === "preparing" || step === "ocr" || step === "analyzing";
@@ -451,8 +470,10 @@ export default function DoculeaTestPage() {
       setStep("done");
 
       if (speakOn && json?.plain_language_summary) {
-        speak(withFollowStepsSuffix(String(json.plain_language_summary || ""), lang), lang);
+      const spoken = withFollowStepsSuffix(String(json.plain_language_summary || ""), lang);
+      speak(spoken, lang);
       }
+
     } catch (e: any) {
       setStep("error");
       setError(e?.message || "Unknown error");
@@ -553,8 +574,10 @@ export default function DoculeaTestPage() {
     setStep("done");
 
     if (speakOn && json?.plain_language_summary) {
-      speak(String(json.plain_language_summary), language);
+      const spoken = withFollowStepsSuffix(String(json.plain_language_summary || ""), language);
+      speak(spoken, language);
     }
+
   }
 
   async function retryLast() {
@@ -593,10 +616,21 @@ export default function DoculeaTestPage() {
   const pickLibrary = () => libraryInputRef.current?.click();
 
   const setLanguage = (l: Lang) => {
-    setLang(l);
-    setStoredLang(l);
-    setShowLangOnboarding(false);
-  };
+  setLang(l);
+  setStoredLang(l);
+
+  // apply onboarding choice
+  setSpeakOn(onboardingSpeakOn);
+  setStoredSpeak(onboardingSpeakOn);
+
+  setShowLangOnboarding(false);
+
+  // iPhone Safari: do a tiny speech here to "unlock" voice for later
+  if (onboardingSpeakOn) {
+    speak(onboardingVoiceLine(l), l);
+  }
+};
+
 
   const stopSpeaking = () => {
     if (typeof window === "undefined") return;
@@ -605,9 +639,10 @@ export default function DoculeaTestPage() {
   };
 
   const repeatSpeaking = () => {
-    if (!result?.plain_language_summary) return;
-    speak(String(result.plain_language_summary), lang);
-  };
+    const s = String(result?.plain_language_summary || "");
+    if (!s) return;
+    speak(withFollowStepsSuffix(s, lang), lang);
+     };
 
   return (
     <div style={{ minHeight: "100vh", background: "#f8fafc" }}>
@@ -630,6 +665,22 @@ export default function DoculeaTestPage() {
               <div style={{ fontWeight: 900, fontSize: 18 }}>{t("es", "chooseLangTitle")}</div>
               <div style={{ color: "#6b7280", marginTop: 6 }}>
                 {"Selecciona Español o English para continuar."}
+                <div style={{ marginTop: 12 }}>
+              <label style={{ display: "flex", gap: 10, alignItems: "center", fontWeight: 800, color: "#111827" }}>
+                <input
+                  type="checkbox"
+                  checked={onboardingSpeakOn}
+                  onChange={(e) => setOnboardingSpeakOn(e.target.checked)}
+                />
+                {lang === "es" ? "Leer resultados en voz alta" : "Read results aloud"}
+              </label>
+              <div style={{ color: "#6b7280", fontSize: 12, marginTop: 6 }}>
+                {lang === "es"
+                  ? "Puedes cambiar esto después."
+                  : "You can change this later."}
+              </div>
+</div>
+
               </div>
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 10, marginTop: 14 }}>
