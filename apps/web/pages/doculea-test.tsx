@@ -48,7 +48,8 @@ const COPY: Record<Lang, Record<string, string>> = {
     safetyNotes: "Notas de seguridad",
     copy: "Copiar",
     copied: "Copiado",
-    copyFail: "No se pudo copiar (el navegador bloqueó el portapapeles). Puedes seleccionar y copiar manualmente.",
+    copyFail:
+      "No se pudo copiar (el navegador bloqueó el portapapeles). Puedes seleccionar y copiar manualmente.",
     readAloud: "Leer en voz alta",
     stop: "Detener",
     repeat: "Repetir",
@@ -98,7 +99,8 @@ const COPY: Record<Lang, Record<string, string>> = {
     safetyNotes: "Safety notes",
     copy: "Copy",
     copied: "Copied",
-    copyFail: "Copy failed (browser blocked clipboard). You can manually select and copy.",
+    copyFail:
+      "Copy failed (browser blocked clipboard). You can manually select and copy.",
     readAloud: "Read aloud",
     stop: "Stop",
     repeat: "Repeat",
@@ -124,6 +126,26 @@ function setStoredLang(lang: Lang) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(STORAGE_LANG_KEY, lang);
 }
+
+
+function withFollowStepsSuffix(summary: string, lang: Lang) {
+  const s = (summary || "").trim();
+  if (!s) return s;
+
+  const suffix =
+    lang === "es"
+      ? " Sigue los pasos a continuación para más información."
+      : " Follow the steps below for more information.";
+
+  // avoid doubling if already present
+  if (s.toLowerCase().includes(" follow the steps below")) return s;
+  if (s.toLowerCase().includes(" sigue los pasos a continuación")) return s;
+
+  return s.endsWith(".") ? s + suffix.slice(1) : s + suffix;
+}
+
+
+
 
 function getStoredSpeak(): boolean | null {
   if (typeof window === "undefined") return null;
@@ -179,7 +201,6 @@ async function normalizeToJpegIfHeic(file: File): Promise<File> {
   }
 
   const heic2any = (await import("heic2any")).default;
-
   const converted = (await heic2any({
     blob: file,
     toType: "image/jpeg",
@@ -326,7 +347,8 @@ function speak(text: string, lang: Lang) {
   try {
     window.speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
-    u.lang = lang === "es" ? "es-MX" : "en-US";
+    u.lang = lang === "es" ? "es-MX" : "en-US"; // LatAm-ish
+// If you prefer Spanish US instead, use "es-US"
     u.rate = 1.0;
     u.pitch = 1.0;
     window.speechSynthesis.speak(u);
@@ -334,26 +356,16 @@ function speak(text: string, lang: Lang) {
     // ignore
   }
 }
-function withFollowStepsSuffix(summary: string, lang: Lang) {
-  const s = (summary || "").trim();
-  if (!s) return s;
 
-  const suffix =
-    lang === "es"
-      ? " Sigue los pasos a continuación para más información."
-      : " Follow the steps below for more information.";
-
-  const low = s.toLowerCase();
-  if (low.includes("sigue los pasos a continuación")) return s;
-  if (low.includes("follow the steps below")) return s;
-
-  return s.endsWith(".") ? s + suffix.slice(1) : s + suffix;
-}
-
-function onboardingVoiceLine(l: Lang) {
-  return l === "es"
-    ? "Perfecto. Voy a leer el resumen en voz alta."
-    : "Great. I will read the summary out loud.";
+// Read response as JSON if possible; otherwise as text
+async function readResponseBody(resp: Response): Promise<{ json: any | null; text: string }> {
+  try {
+    const j = await resp.json();
+    return { json: j, text: "" };
+  } catch {
+    const t = await resp.text().catch(() => "");
+    return { json: null, text: t };
+  }
 }
 
 export default function DoculeaTestPage() {
@@ -361,7 +373,6 @@ export default function DoculeaTestPage() {
   const [showLangOnboarding, setShowLangOnboarding] = useState(false);
 
   const [speakOn, setSpeakOn] = useState(true);
-  const [onboardingSpeakOn, setOnboardingSpeakOn] = useState(true);
 
   const [text, setText] = useState("FINAL NOTICE: Pay $500 in gift cards or you will be arrested.");
   const [result, setResult] = useState<any>(null);
@@ -377,6 +388,52 @@ export default function DoculeaTestPage() {
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
 
+  // ✅ Critical: remember last photo for retry
+  const lastPhotoRef = useRef<File | null>(null);
+  const lastModeRef = useRef<"photo" | "text">("photo");
+  const [onboardingSpeakOn, setOnboardingSpeakOn] = useState(true);
+
+function buildSummaryPrefix(result: any, lang: Lang): string {
+  const status = result?.legitimacy_assessment?.status as string | undefined;
+  const actionType = result?.ui_action_type as string | undefined;
+
+  if (status === "suspicious") {
+    return lang === "es"
+      ? "⚠️ Este documento parece sospechoso. Ten cuidado. "
+      : "⚠️ This document appears suspicious. Proceed with caution. ";
+  }
+  if (status === "unclear") {
+    return lang === "es"
+      ? "⚠️ No está claro si este documento es legítimo. Verifica con cuidado. "
+      : "⚠️ It’s unclear if this document is legit. Verify carefully. ";
+  }
+  if (status === "likely_legit") {
+    // keep it short; don't overpromise
+    // We'll still rely on the full analysis below.
+  }
+
+  if (actionType === "action_required") {
+    return lang === "es"
+      ? "📌 Este documento requiere que tomes acción. "
+      : "📌 This document requires you to take action. ";
+  }
+
+  if (actionType === "offer") {
+    return lang === "es"
+      ? "ℹ️ Este documento parece ser una oferta o promoción. No es necesario que tomes acción. "
+      : "ℹ️ This document appears to be an offer or promotion. No action is required. ";
+  }
+
+  return "";
+}
+
+function onboardingVoiceLine(l: Lang) {
+  return l === "es"
+    ? "Perfecto. Voy a leer el resumen en voz alta."
+    : "Great. I will read the summary out loud.";
+}
+
+
   useEffect(() => {
     const stored = getStoredLang();
     if (stored) {
@@ -388,18 +445,20 @@ export default function DoculeaTestPage() {
     }
 
     const speakStored = getStoredSpeak();
-    // Default ON for mom testing; user can change later
+    if (speakStored === null) setSpeakOn(true);
+    else setSpeakOn(speakStored);
+
     if (speakStored === null) {
-      setSpeakOn(true);
-      setOnboardingSpeakOn(true);
-    } else {
-      setSpeakOn(speakStored);
-      setOnboardingSpeakOn(speakStored);
-    }
+  setSpeakOn(true);
+  setOnboardingSpeakOn(true);
+} else {
+  setSpeakOn(speakStored);
+  setOnboardingSpeakOn(speakStored);
+}
+
   }, []);
 
   useEffect(() => {
-    // persist language when user changes it
     setStoredLang(lang);
   }, [lang]);
 
@@ -407,10 +466,13 @@ export default function DoculeaTestPage() {
     setStoredSpeak(speakOn);
   }, [speakOn]);
 
+  
+
   const canAnalyze = useMemo(() => text.trim().length >= 20, [text]);
   const loading = step === "preparing" || step === "ocr" || step === "analyzing";
 
   async function runFromText() {
+    lastModeRef.current = "text";
     setError(null);
     setResult(null);
     setExtractedText(null);
@@ -423,15 +485,29 @@ export default function DoculeaTestPage() {
         body: JSON.stringify({ text: text.trim(), language: lang }),
       });
 
-      const json = await r.json();
-      if (!r.ok) throw new Error(json?.error || `Request failed (HTTP ${r.status})`);
+      const { json, text: rawText } = await readResponseBody(r);
+
+      if (!r.ok || json?.ok === false || json?.error) {
+        console.error("[DOCULEA] analyze(text) failed", { status: r.status, json, rawText });
+        const msg =
+          json?.error || json?.message || rawText || `Request failed (HTTP ${r.status})`;
+        const details =
+          json?.details
+            ? typeof json.details === "string"
+              ? json.details
+              : JSON.stringify(json.details, null, 2)
+            : "";
+        throw new Error(details ? `${msg}\n\n${details}` : msg);
+      }
 
       setResult(json);
       setStep("done");
 
       if (speakOn && json?.plain_language_summary) {
-        speak(withFollowStepsSuffix(String(json.plain_language_summary || ""), lang), lang);
+      const spoken = withFollowStepsSuffix(buildSummaryPrefix(json, lang) + String(json.plain_language_summary || ""), lang);
+        speak(spoken, lang);
       }
+
     } catch (e: any) {
       setStep("error");
       setError(e?.message || "Unknown error");
@@ -446,6 +522,7 @@ export default function DoculeaTestPage() {
     e.currentTarget.value = "";
     if (!f) return;
 
+    lastModeRef.current = "photo";
     setError(null);
     setResult(null);
     setExtractedText(null);
@@ -463,12 +540,14 @@ export default function DoculeaTestPage() {
       return;
     }
 
+    // ✅ store for retry
     setPhotoFile(finalFile);
+    lastPhotoRef.current = finalFile;
 
     if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
     setPhotoPreviewUrl(URL.createObjectURL(finalFile));
 
-    // ✅ Auto-run: no "Analyze Photo" button
+    // ✅ Auto-run
     try {
       await runFromPhoto(finalFile, lang);
     } catch (err: any) {
@@ -478,13 +557,16 @@ export default function DoculeaTestPage() {
   }
 
   async function runFromPhoto(file: File, language: Lang) {
+    lastModeRef.current = "photo";
+    lastPhotoRef.current = file;
+
     setError(null);
     setResult(null);
     setExtractedText(null);
 
     setStep("preparing");
-
     const normalized = await normalizeToJpegIfHeic(file);
+    lastPhotoRef.current = normalized;
 
     setStep("ocr");
     const ocrText = await ocrInBrowser(normalized, language);
@@ -495,8 +577,12 @@ export default function DoculeaTestPage() {
       setStep("error");
       const msg =
         language === "es"
-          ? `${t(language, "weakOcrTitle")} (caracteres=${q.charCount}, palabras=${q.wordCount}).\n\n${t(language, "weakOcrBody")}`
-          : `${t(language, "weakOcrTitle")} (chars=${q.charCount}, words=${q.wordCount}).\n\n${t(language, "weakOcrBody")}`;
+          ? `${t(language, "weakOcrTitle")} (caracteres=${q.charCount}, palabras=${q.wordCount}, frases=${q.phraseCount}, líneas=${q.lineCount}).
+
+${t(language, "weakOcrBody")}`
+          : `${t(language, "weakOcrTitle")} (chars=${q.charCount}, words=${q.wordCount}, phrases=${q.phraseCount}, lines=${q.lineCount}).
+
+${t(language, "weakOcrBody")}`;
       throw new Error(msg);
     }
 
@@ -507,37 +593,82 @@ export default function DoculeaTestPage() {
       body: JSON.stringify({ text: ocrText.trim(), language }),
     });
 
-    const json = await resp.json();
-    if (!resp.ok) {
-      throw new Error(json?.error || `Analyze failed (${resp.status})`);
+    const { json, text: rawText } = await readResponseBody(resp);
+
+    if (!resp.ok || json?.ok === false || json?.error) {
+      console.error("[DOCULEA] analyze(photo) failed", { status: resp.status, json, rawText });
+      const msg =
+        json?.error || json?.message || rawText || `Analyze failed (${resp.status})`;
+      const details =
+        json?.details
+          ? typeof json.details === "string"
+            ? json.details
+            : JSON.stringify(json.details, null, 2)
+          : "";
+      throw new Error(details ? `${msg}\n\n${details}` : msg);
     }
 
     setResult(json);
     setStep("done");
 
     if (speakOn && json?.plain_language_summary) {
-      speak(withFollowStepsSuffix(String(json.plain_language_summary || ""), language), language);
+      const spoken = withFollowStepsSuffix(buildSummaryPrefix(json, language) + String(json.plain_language_summary || ""), language);
+      speak(spoken, language);
     }
+
+  }
+
+  async function retryLast() {
+    console.log("[DOCULEA] retryLast()", {
+      hasLastPhoto: !!lastPhotoRef.current,
+      hasPhotoFile: !!photoFile,
+      lastMode: lastModeRef.current,
+      step,
+      lang,
+    });
+
+    setError(null);
+    setResult(null);
+    setExtractedText(null);
+
+    const file = lastPhotoRef.current || photoFile;
+    if (file) {
+      try {
+        await runFromPhoto(file, lang);
+      } catch (err: any) {
+        setStep("error");
+        setError(err?.message || "Unknown error");
+      }
+      return;
+    }
+
+    if (canAnalyze) {
+      await runFromText();
+      return;
+    }
+
+    setStep("idle");
   }
 
   const pickCamera = () => cameraInputRef.current?.click();
   const pickLibrary = () => libraryInputRef.current?.click();
 
   const setLanguage = (l: Lang) => {
-    setLang(l);
-    setStoredLang(l);
+  setLang(l);
+  setStoredLang(l);
 
-    // Apply onboarding choice
-    setSpeakOn(onboardingSpeakOn);
-    setStoredSpeak(onboardingSpeakOn);
+  // apply onboarding choice
+  setSpeakOn(onboardingSpeakOn);
+  setStoredSpeak(onboardingSpeakOn);
 
-    setShowLangOnboarding(false);
+  setShowLangOnboarding(false);
 
-    // iPhone Safari: a user-gesture speech here helps unlock TTS for later
-    if (onboardingSpeakOn) {
-      speak(onboardingVoiceLine(l), l);
-    }
-  };
+  // iPhone Safari: do a tiny speech here to "unlock" voice for later
+  if (onboardingSpeakOn) {
+    speak(onboardingVoiceLine(l), l);
+  }
+};
+
 
   const stopSpeaking = () => {
     if (typeof window === "undefined") return;
@@ -546,9 +677,10 @@ export default function DoculeaTestPage() {
   };
 
   const repeatSpeaking = () => {
-    if (!result?.plain_language_summary) return;
-    speak(withFollowStepsSuffix(String(result.plain_language_summary || ""), lang), lang);
-  };
+    const s = String(result?.plain_language_summary || "");
+    if (!s) return;
+    speak(withFollowStepsSuffix(buildSummaryPrefix(result, lang) + s, lang), lang);
+     };
 
   return (
     <div style={{ minHeight: "100vh", background: "#f8fafc" }}>
@@ -571,20 +703,22 @@ export default function DoculeaTestPage() {
               <div style={{ fontWeight: 900, fontSize: 18 }}>{t("es", "chooseLangTitle")}</div>
               <div style={{ color: "#6b7280", marginTop: 6 }}>
                 {"Selecciona Español o English para continuar."}
+                <div style={{ marginTop: 12 }}>
+              <label style={{ display: "flex", gap: 10, alignItems: "center", fontWeight: 800, color: "#111827" }}>
+                <input
+                  type="checkbox"
+                  checked={onboardingSpeakOn}
+                  onChange={(e) => setOnboardingSpeakOn(e.target.checked)}
+                />
+                {lang === "es" ? "Leer resultados en voz alta" : "Read results aloud"}
+              </label>
+              <div style={{ color: "#6b7280", fontSize: 12, marginTop: 6 }}>
+                {lang === "es"
+                  ? "Puedes cambiar esto después."
+                  : "You can change this later."}
               </div>
+</div>
 
-              <div style={{ marginTop: 12 }}>
-                <label style={{ display: "flex", gap: 10, alignItems: "center", fontWeight: 800, color: "#111827" }}>
-                  <input
-                    type="checkbox"
-                    checked={onboardingSpeakOn}
-                    onChange={(e) => setOnboardingSpeakOn(e.target.checked)}
-                  />
-                  {"Leer resultados en voz alta / Read results aloud"}
-                </label>
-                <div style={{ color: "#6b7280", fontSize: 12, marginTop: 6 }}>
-                  {"Puedes cambiar esto después / You can change this later."}
-                </div>
               </div>
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 10, marginTop: 14 }}>
@@ -744,12 +878,7 @@ export default function DoculeaTestPage() {
           {/* Speech controls */}
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10, alignItems: "center" }}>
             <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 800, color: "#111827" }}>
-              <input
-                type="checkbox"
-                checked={speakOn}
-                onChange={(e) => setSpeakOn(e.target.checked)}
-                disabled={loading}
-              />
+              <input type="checkbox" checked={speakOn} onChange={(e) => setSpeakOn(e.target.checked)} disabled={loading} />
               {t(lang, "readAloud")}
             </label>
 
@@ -840,12 +969,7 @@ export default function DoculeaTestPage() {
               <strong>Error:</strong> {error}
               <div style={{ marginTop: 10 }}>
                 <button
-                  onClick={() => {
-                    setError(null);
-                    setStep("idle");
-                    setResult(null);
-                    setExtractedText(null);
-                  }}
+                  onClick={() => void retryLast()}
                   style={{
                     border: "1px solid #e5e7eb",
                     borderRadius: 12,
@@ -865,7 +989,7 @@ export default function DoculeaTestPage() {
 
         <div style={{ height: 12 }} />
 
-        {/* Paste text flow (kept for dev/testing; translated) */}
+        {/* Paste text flow */}
         <Card title={t(lang, "pasteTitle")}>
           <textarea
             value={text}
@@ -888,7 +1012,7 @@ export default function DoculeaTestPage() {
             <div style={{ color: "#6b7280", fontSize: 12 }}>{t(lang, "minChars")}</div>
 
             <button
-              onClick={runFromText}
+              onClick={() => void runFromText()}
               disabled={!canAnalyze || loading}
               style={{
                 border: "1px solid #e5e7eb",
@@ -925,7 +1049,9 @@ export default function DoculeaTestPage() {
 
               <div style={{ marginTop: 12, color: "#111827" }}>
                 <div style={{ fontWeight: 900, fontSize: 16 }}>{t(lang, "summary")}</div>
-                <div style={{ marginTop: 6 }}>{withFollowStepsSuffix(String(result.plain_language_summary || ""), lang)}</div>
+                <div style={{ marginTop: 6 }}>
+                  {withFollowStepsSuffix(buildSummaryPrefix(result, lang) + String(result.plain_language_summary || ""), lang)}
+                  </div>
               </div>
 
               <div style={{ marginTop: 12, color: "#111827" }}>
@@ -955,7 +1081,7 @@ export default function DoculeaTestPage() {
               </Card>
             )}
 
-            {(result.suggested_scripts?.call_script || result.suggested_scripts?.email_template) && (
+            {result?.ui_action_type !== "offer" && (result.suggested_scripts?.call_script || result.suggested_scripts?.email_template) && (
               <Card title={t(lang, "scripts")}>
                 {result.suggested_scripts?.call_script && (
                   <CopyBlock label={t(lang, "callScript")} text={result.suggested_scripts.call_script} lang={lang} />
