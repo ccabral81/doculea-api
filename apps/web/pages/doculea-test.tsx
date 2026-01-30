@@ -48,8 +48,7 @@ const COPY: Record<Lang, Record<string, string>> = {
     safetyNotes: "Notas de seguridad",
     copy: "Copiar",
     copied: "Copiado",
-    copyFail:
-      "No se pudo copiar (el navegador bloqueó el portapapeles). Puedes seleccionar y copiar manualmente.",
+    copyFail: "No se pudo copiar (el navegador bloqueó el portapapeles). Puedes seleccionar y copiar manualmente.",
     readAloud: "Leer en voz alta",
     stop: "Detener",
     repeat: "Repetir",
@@ -99,8 +98,7 @@ const COPY: Record<Lang, Record<string, string>> = {
     safetyNotes: "Safety notes",
     copy: "Copy",
     copied: "Copied",
-    copyFail:
-      "Copy failed (browser blocked clipboard). You can manually select and copy.",
+    copyFail: "Copy failed (browser blocked clipboard). You can manually select and copy.",
     readAloud: "Read aloud",
     stop: "Stop",
     repeat: "Repeat",
@@ -126,26 +124,6 @@ function setStoredLang(lang: Lang) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(STORAGE_LANG_KEY, lang);
 }
-
-
-function withFollowStepsSuffix(summary: string, lang: Lang) {
-  const s = (summary || "").trim();
-  if (!s) return s;
-
-  const suffix =
-    lang === "es"
-      ? " Sigue los pasos a continuación para más información."
-      : " Follow the steps below for more information.";
-
-  // avoid doubling if already present
-  if (s.toLowerCase().includes("follow the steps below")) return s;
-  if (s.toLowerCase().includes("sigue los pasos a continuación")) return s;
-
-  return s.endsWith(".") ? s + suffix.slice(1) : s + suffix;
-}
-
-
-
 
 function getStoredSpeak(): boolean | null {
   if (typeof window === "undefined") return null;
@@ -201,6 +179,7 @@ async function normalizeToJpegIfHeic(file: File): Promise<File> {
   }
 
   const heic2any = (await import("heic2any")).default;
+
   const converted = (await heic2any({
     blob: file,
     toType: "image/jpeg",
@@ -347,8 +326,7 @@ function speak(text: string, lang: Lang) {
   try {
     window.speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
-    u.lang = lang === "es" ? "es-MX" : "en-US"; // LatAm-ish
-// If you prefer Spanish US instead, use "es-US"
+    u.lang = lang === "es" ? "es-MX" : "en-US";
     u.rate = 1.0;
     u.pitch = 1.0;
     window.speechSynthesis.speak(u);
@@ -356,16 +334,26 @@ function speak(text: string, lang: Lang) {
     // ignore
   }
 }
+function withFollowStepsSuffix(summary: string, lang: Lang) {
+  const s = (summary || "").trim();
+  if (!s) return s;
 
-// Read response as JSON if possible; otherwise as text
-async function readResponseBody(resp: Response): Promise<{ json: any | null; text: string }> {
-  try {
-    const j = await resp.json();
-    return { json: j, text: "" };
-  } catch {
-    const t = await resp.text().catch(() => "");
-    return { json: null, text: t };
-  }
+  const suffix =
+    lang === "es"
+      ? " Sigue los pasos a continuación para más información."
+      : " Follow the steps below for more information.";
+
+  const low = s.toLowerCase();
+  if (low.includes("sigue los pasos a continuación")) return s;
+  if (low.includes("follow the steps below")) return s;
+
+  return s.endsWith(".") ? s + suffix.slice(1) : s + suffix;
+}
+
+function onboardingVoiceLine(l: Lang) {
+  return l === "es"
+    ? "Perfecto. Voy a leer el resumen en voz alta."
+    : "Great. I will read the summary out loud.";
 }
 
 export default function DoculeaTestPage() {
@@ -373,6 +361,7 @@ export default function DoculeaTestPage() {
   const [showLangOnboarding, setShowLangOnboarding] = useState(false);
 
   const [speakOn, setSpeakOn] = useState(true);
+  const [onboardingSpeakOn, setOnboardingSpeakOn] = useState(true);
 
   const [text, setText] = useState("FINAL NOTICE: Pay $500 in gift cards or you will be arrested.");
   const [result, setResult] = useState<any>(null);
@@ -388,18 +377,6 @@ export default function DoculeaTestPage() {
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
 
-  // ✅ Critical: remember last photo for retry
-  const lastPhotoRef = useRef<File | null>(null);
-  const lastModeRef = useRef<"photo" | "text">("photo");
-  const [onboardingSpeakOn, setOnboardingSpeakOn] = useState(true);
-
-function onboardingVoiceLine(l: Lang) {
-  return l === "es"
-    ? "Perfecto. Voy a leer el resumen en voz alta."
-    : "Great. I will read the summary out loud.";
-}
-
-
   useEffect(() => {
     const stored = getStoredLang();
     if (stored) {
@@ -411,20 +388,18 @@ function onboardingVoiceLine(l: Lang) {
     }
 
     const speakStored = getStoredSpeak();
-    if (speakStored === null) setSpeakOn(true);
-    else setSpeakOn(speakStored);
-
+    // Default ON for mom testing; user can change later
     if (speakStored === null) {
-  setSpeakOn(true);
-  setOnboardingSpeakOn(true);
-} else {
-  setSpeakOn(speakStored);
-  setOnboardingSpeakOn(speakStored);
-}
-
+      setSpeakOn(true);
+      setOnboardingSpeakOn(true);
+    } else {
+      setSpeakOn(speakStored);
+      setOnboardingSpeakOn(speakStored);
+    }
   }, []);
 
   useEffect(() => {
+    // persist language when user changes it
     setStoredLang(lang);
   }, [lang]);
 
@@ -432,13 +407,10 @@ function onboardingVoiceLine(l: Lang) {
     setStoredSpeak(speakOn);
   }, [speakOn]);
 
-  
-
   const canAnalyze = useMemo(() => text.trim().length >= 20, [text]);
   const loading = step === "preparing" || step === "ocr" || step === "analyzing";
 
   async function runFromText() {
-    lastModeRef.current = "text";
     setError(null);
     setResult(null);
     setExtractedText(null);
@@ -451,29 +423,15 @@ function onboardingVoiceLine(l: Lang) {
         body: JSON.stringify({ text: text.trim(), language: lang }),
       });
 
-      const { json, text: rawText } = await readResponseBody(r);
-
-      if (!r.ok || json?.ok === false || json?.error) {
-        console.error("[DOCULEA] analyze(text) failed", { status: r.status, json, rawText });
-        const msg =
-          json?.error || json?.message || rawText || `Request failed (HTTP ${r.status})`;
-        const details =
-          json?.details
-            ? typeof json.details === "string"
-              ? json.details
-              : JSON.stringify(json.details, null, 2)
-            : "";
-        throw new Error(details ? `${msg}\n\n${details}` : msg);
-      }
+      const json = await r.json();
+      if (!r.ok) throw new Error(json?.error || `Request failed (HTTP ${r.status})`);
 
       setResult(json);
       setStep("done");
 
       if (speakOn && json?.plain_language_summary) {
-      const spoken = withFollowStepsSuffix(String(json.plain_language_summary || ""), lang);
-      speak(spoken, lang);
+        speak(withFollowStepsSuffix(String(json.plain_language_summary || ""), lang), lang);
       }
-
     } catch (e: any) {
       setStep("error");
       setError(e?.message || "Unknown error");
@@ -488,7 +446,6 @@ function onboardingVoiceLine(l: Lang) {
     e.currentTarget.value = "";
     if (!f) return;
 
-    lastModeRef.current = "photo";
     setError(null);
     setResult(null);
     setExtractedText(null);
@@ -506,14 +463,12 @@ function onboardingVoiceLine(l: Lang) {
       return;
     }
 
-    // ✅ store for retry
     setPhotoFile(finalFile);
-    lastPhotoRef.current = finalFile;
 
     if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
     setPhotoPreviewUrl(URL.createObjectURL(finalFile));
 
-    // ✅ Auto-run
+    // ✅ Auto-run: no "Analyze Photo" button
     try {
       await runFromPhoto(finalFile, lang);
     } catch (err: any) {
@@ -523,16 +478,13 @@ function onboardingVoiceLine(l: Lang) {
   }
 
   async function runFromPhoto(file: File, language: Lang) {
-    lastModeRef.current = "photo";
-    lastPhotoRef.current = file;
-
     setError(null);
     setResult(null);
     setExtractedText(null);
 
     setStep("preparing");
+
     const normalized = await normalizeToJpegIfHeic(file);
-    lastPhotoRef.current = normalized;
 
     setStep("ocr");
     const ocrText = await ocrInBrowser(normalized, language);
@@ -555,82 +507,37 @@ function onboardingVoiceLine(l: Lang) {
       body: JSON.stringify({ text: ocrText.trim(), language }),
     });
 
-    const { json, text: rawText } = await readResponseBody(resp);
-
-    if (!resp.ok || json?.ok === false || json?.error) {
-      console.error("[DOCULEA] analyze(photo) failed", { status: resp.status, json, rawText });
-      const msg =
-        json?.error || json?.message || rawText || `Analyze failed (${resp.status})`;
-      const details =
-        json?.details
-          ? typeof json.details === "string"
-            ? json.details
-            : JSON.stringify(json.details, null, 2)
-          : "";
-      throw new Error(details ? `${msg}\n\n${details}` : msg);
+    const json = await resp.json();
+    if (!resp.ok) {
+      throw new Error(json?.error || `Analyze failed (${resp.status})`);
     }
 
     setResult(json);
     setStep("done");
 
     if (speakOn && json?.plain_language_summary) {
-      const spoken = withFollowStepsSuffix(String(json.plain_language_summary || ""), language);
-      speak(spoken, language);
+      speak(withFollowStepsSuffix(String(json.plain_language_summary || ""), language), language);
     }
-
-  }
-
-  async function retryLast() {
-    console.log("[DOCULEA] retryLast()", {
-      hasLastPhoto: !!lastPhotoRef.current,
-      hasPhotoFile: !!photoFile,
-      lastMode: lastModeRef.current,
-      step,
-      lang,
-    });
-
-    setError(null);
-    setResult(null);
-    setExtractedText(null);
-
-    const file = lastPhotoRef.current || photoFile;
-    if (file) {
-      try {
-        await runFromPhoto(file, lang);
-      } catch (err: any) {
-        setStep("error");
-        setError(err?.message || "Unknown error");
-      }
-      return;
-    }
-
-    if (canAnalyze) {
-      await runFromText();
-      return;
-    }
-
-    setStep("idle");
   }
 
   const pickCamera = () => cameraInputRef.current?.click();
   const pickLibrary = () => libraryInputRef.current?.click();
 
   const setLanguage = (l: Lang) => {
-  setLang(l);
-  setStoredLang(l);
+    setLang(l);
+    setStoredLang(l);
 
-  // apply onboarding choice
-  setSpeakOn(onboardingSpeakOn);
-  setStoredSpeak(onboardingSpeakOn);
+    // Apply onboarding choice
+    setSpeakOn(onboardingSpeakOn);
+    setStoredSpeak(onboardingSpeakOn);
 
-  setShowLangOnboarding(false);
+    setShowLangOnboarding(false);
 
-  // iPhone Safari: do a tiny speech here to "unlock" voice for later
-  if (onboardingSpeakOn) {
-    speak(onboardingVoiceLine(l), l);
-  }
-};
-
+    // iPhone Safari: a user-gesture speech here helps unlock TTS for later
+    if (onboardingSpeakOn) {
+      speak(onboardingVoiceLine(l), l);
+    }
+  };
 
   const stopSpeaking = () => {
     if (typeof window === "undefined") return;
@@ -639,10 +546,9 @@ function onboardingVoiceLine(l: Lang) {
   };
 
   const repeatSpeaking = () => {
-    const s = String(result?.plain_language_summary || "");
-    if (!s) return;
-    speak(withFollowStepsSuffix(s, lang), lang);
-     };
+    if (!result?.plain_language_summary) return;
+    speak(withFollowStepsSuffix(String(result.plain_language_summary || ""), lang), lang);
+  };
 
   return (
     <div style={{ minHeight: "100vh", background: "#f8fafc" }}>
@@ -665,22 +571,20 @@ function onboardingVoiceLine(l: Lang) {
               <div style={{ fontWeight: 900, fontSize: 18 }}>{t("es", "chooseLangTitle")}</div>
               <div style={{ color: "#6b7280", marginTop: 6 }}>
                 {"Selecciona Español o English para continuar."}
-                <div style={{ marginTop: 12 }}>
-              <label style={{ display: "flex", gap: 10, alignItems: "center", fontWeight: 800, color: "#111827" }}>
-                <input
-                  type="checkbox"
-                  checked={onboardingSpeakOn}
-                  onChange={(e) => setOnboardingSpeakOn(e.target.checked)}
-                />
-                {lang === "es" ? "Leer resultados en voz alta" : "Read results aloud"}
-              </label>
-              <div style={{ color: "#6b7280", fontSize: 12, marginTop: 6 }}>
-                {lang === "es"
-                  ? "Puedes cambiar esto después."
-                  : "You can change this later."}
               </div>
-</div>
 
+              <div style={{ marginTop: 12 }}>
+                <label style={{ display: "flex", gap: 10, alignItems: "center", fontWeight: 800, color: "#111827" }}>
+                  <input
+                    type="checkbox"
+                    checked={onboardingSpeakOn}
+                    onChange={(e) => setOnboardingSpeakOn(e.target.checked)}
+                  />
+                  {"Leer resultados en voz alta / Read results aloud"}
+                </label>
+                <div style={{ color: "#6b7280", fontSize: 12, marginTop: 6 }}>
+                  {"Puedes cambiar esto después / You can change this later."}
+                </div>
               </div>
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 10, marginTop: 14 }}>
@@ -840,7 +744,12 @@ function onboardingVoiceLine(l: Lang) {
           {/* Speech controls */}
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10, alignItems: "center" }}>
             <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 800, color: "#111827" }}>
-              <input type="checkbox" checked={speakOn} onChange={(e) => setSpeakOn(e.target.checked)} disabled={loading} />
+              <input
+                type="checkbox"
+                checked={speakOn}
+                onChange={(e) => setSpeakOn(e.target.checked)}
+                disabled={loading}
+              />
               {t(lang, "readAloud")}
             </label>
 
@@ -931,7 +840,12 @@ function onboardingVoiceLine(l: Lang) {
               <strong>Error:</strong> {error}
               <div style={{ marginTop: 10 }}>
                 <button
-                  onClick={() => void retryLast()}
+                  onClick={() => {
+                    setError(null);
+                    setStep("idle");
+                    setResult(null);
+                    setExtractedText(null);
+                  }}
                   style={{
                     border: "1px solid #e5e7eb",
                     borderRadius: 12,
@@ -951,7 +865,7 @@ function onboardingVoiceLine(l: Lang) {
 
         <div style={{ height: 12 }} />
 
-        {/* Paste text flow */}
+        {/* Paste text flow (kept for dev/testing; translated) */}
         <Card title={t(lang, "pasteTitle")}>
           <textarea
             value={text}
@@ -974,7 +888,7 @@ function onboardingVoiceLine(l: Lang) {
             <div style={{ color: "#6b7280", fontSize: 12 }}>{t(lang, "minChars")}</div>
 
             <button
-              onClick={() => void runFromText()}
+              onClick={runFromText}
               disabled={!canAnalyze || loading}
               style={{
                 border: "1px solid #e5e7eb",
@@ -1011,9 +925,7 @@ function onboardingVoiceLine(l: Lang) {
 
               <div style={{ marginTop: 12, color: "#111827" }}>
                 <div style={{ fontWeight: 900, fontSize: 16 }}>{t(lang, "summary")}</div>
-                <div style={{ marginTop: 6 }}>
-                  {withFollowStepsSuffix(String(result.plain_language_summary || ""), lang)}
-                  </div>
+                <div style={{ marginTop: 6 }}>{withFollowStepsSuffix(String(result.plain_language_summary || ""), lang)}</div>
               </div>
 
               <div style={{ marginTop: 12, color: "#111827" }}>

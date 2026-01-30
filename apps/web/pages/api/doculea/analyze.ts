@@ -1,33 +1,17 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import OpenAI from "openai";
 
-import {
-  DOCULEA_SYSTEM_PROMPT,
-  buildDoculeaUserPrompt,
-} from "../../../../../packages/core/src/prompts/doculeaPrompts";
-import {
-  DoculeaResponseSchema,
-  DoculeaResponse,
-} from "../../../../../packages/core/src/schema/doculeaSchema";
+import { DOCULEA_SYSTEM_PROMPT, buildDoculeaUserPrompt } from "../../../../../packages/core/src/prompts/doculeaPrompts";
+import { DoculeaResponseSchema, DoculeaResponse } from "../../../../../packages/core/src/schema/doculeaSchema";
 import { applyHardSafetyOverride } from "../../../../../packages/core/src/safety/doculeaSafety";
 import { mapOutputToBucket } from "../../../../../packages/core/src/mapping/bucketMap";
-
-function toConfidenceEnum(v: any): "high" | "medium" | "low" {
-  if (v === "high" || v === "medium" || v === "low") return v;
-  const n = typeof v === "number" ? v : Number(v);
-  if (!Number.isFinite(n)) return "medium";
-  if (n >= 0.8) return "high";
-  if (n >= 0.5) return "medium";
-  return "low";
-}
-
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const DEBUG = process.env.NODE_ENV !== "production";
 
 // Hard limits
-const MAX_CHARS = 20000;
+const MAX_CHARS = 20000; // protect cost/perf
 
 // Long-doc handling (local, no extra model call)
 const CONDENSE_THRESHOLD_CHARS = 4500;
@@ -84,8 +68,7 @@ function renumberSteps(result: DoculeaResponse): DoculeaResponse {
 }
 
 function normalizeLang(input: unknown): "en" | "es" {
-  const v = String(input ?? "").toLowerCase().trim();
-  if (v === "es" || v.startsWith("es-") || v === "spanish" || v === "espanol" || v === "español") return "es";
+  if (input === "es" || input === "spanish") return "es";
   return "en";
 }
 
@@ -100,11 +83,20 @@ function pickDocumentText(body: any): string | undefined {
   );
 }
 
-// ✅ one-shot repair retry when JSON shape is almost right but fails Zod
+
+function toConfidenceEnum(v: any): "high" | "medium" | "low" {
+  if (v === "high" || v === "medium" || v === "low") return v;
+  const n = typeof v === "number" ? v : Number(v);
+  if (!Number.isFinite(n)) return "medium";
+  if (n >= 0.8) return "high";
+  if (n >= 0.5) return "medium";
+  return "low";
+}
+
+// ✅ One-shot repair: if JSON is close but fails Zod, ask the model to fix shape deterministically.
 async function repairToSchemaOnce(args: {
   rawJson: any;
   zodFormattedError: any;
-  language: "en" | "es";
 }) {
   const { rawJson, zodFormattedError } = args;
 
@@ -195,56 +187,74 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     try {
       json = JSON.parse(raw);
     } catch {
-      return res.status(422).json({ error: "AI returned invalid JSON." });
+      return res.status(500).json({ error: "AI returned invalid JSON." });
     }
 
-// Normalize confidence fields to schema enums (pre-parse)
-try {
-  if (json?.document_type) {
-    json.document_type.confidence = toConfidenceEnum(json.document_type.confidence);
-  }
-  if (json?.legitimacy_assessment) {
-    json.legitimacy_assessment.confidence = toConfidenceEnum(json.legitimacy_assessment.confidence);
-  }
-} catch {
-  // ignore — parse will catch missing shape
-}
+    // Normalize confidence fields to schema enums (pre-parse)
+    try {
+      if (json?.document_type) {
+        json.document_type.confidence = toConfidenceEnum(json.document_type.confidence);
+      }
+      if (json?.legitimacy_assessment) {
+        json.legitimacy_assessment.confidence = toConfidenceEnum(json.legitimacy_assessment.confidence);
+      }
+    } catch {
+      // ignore; schema parse will catch missing shape
+    }
 
+    const parsed1 = DoculeaResponseSchema.safeParse(json);
 
-    // First validation
-    let parsed = DoculeaResponseSchema.safeParse(json);
-
-    // ✅ Minimal fix: one repair retry ONLY if schema fails
-    if (!parsed.success) {
+    // ✅ If schema fails, do ONE repair pass (locked deterministic pipeline + retry logic)
+    let parsed = parsed1;
+    if (!parsed1.success) {
       try {
         const repaired = await repairToSchemaOnce({
           rawJson: json,
-          zodFormattedError: parsed.error.format(),
-          language,
+          zodFormattedError: parsed1.error.format(),
         });
-        parsed = DoculeaResponseSchema.safeParse(repaired);
-        if (!parsed.success) {
-          const err = parsed.error!;
-          return res.status(422).json({
-            error: "AI output failed schema validation.",
-            ...(DEBUG ? { details: err.format() } : {}),
-          });
+
+        // normalize confidences again (repair may return numbers)
+        try {
+          if (repaired?.document_type) {
+            repaired.document_type.confidence = toConfidenceEnum(repaired.document_type.confidence);
+          }
+          if (repaired?.legitimacy_assessment) {
+            repaired.legitimacy_assessment.confidence = toConfidenceEnum(repaired.legitimacy_assessment.confidence);
+          }
+        } catch {
+          // ignore
         }
 
+        parsed = DoculeaResponseSchema.safeParse(repaired);
       } catch (e: any) {
-        const err = parsed.error!; // from the first failure
+        const err = parsed1.error;
         return res.status(422).json({
           error: "AI output failed schema validation.",
           ...(DEBUG ? { details: err.format(), repair_error: e?.message } : {}),
         });
       }
 
+      if (!parsed.success) {
+        const err = parsed.error!;
+        return res.status(422).json({
+          error: "AI output failed schema validation.",
+          ...(DEBUG ? { details: err.format() } : {}),
+        });
+      }
+    }
+
+    if (!parsed.success) {
+      const err = parsed.error!;
+      return res.status(422).json({
+        error: "AI output failed schema validation.",
+        ...(DEBUG ? { details: err.format() } : {}),
+      });
     }
 
     let result = parsed.data as DoculeaResponse;
 
     if (!result.step_by_step_actions || result.step_by_step_actions.length < 2) {
-      return res.status(422).json({ error: "AI output missing minimum step-by-step actions." });
+      return res.status(500).json({ error: "AI output missing minimum step-by-step actions." });
     }
 
     result = renumberSteps(result);
@@ -262,4 +272,3 @@ try {
     return res.status(500).json({ error: err?.message || "Server error" });
   }
 }
-
