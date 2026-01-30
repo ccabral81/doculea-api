@@ -48,7 +48,8 @@ const COPY: Record<Lang, Record<string, string>> = {
     safetyNotes: "Notas de seguridad",
     copy: "Copiar",
     copied: "Copiado",
-    copyFail: "No se pudo copiar (el navegador bloqueó el portapapeles). Puedes seleccionar y copiar manualmente.",
+    copyFail:
+      "No se pudo copiar (el navegador bloqueó el portapapeles). Puedes seleccionar y copiar manualmente.",
     readAloud: "Leer en voz alta",
     stop: "Detener",
     repeat: "Repetir",
@@ -98,7 +99,8 @@ const COPY: Record<Lang, Record<string, string>> = {
     safetyNotes: "Safety notes",
     copy: "Copy",
     copied: "Copied",
-    copyFail: "Copy failed (browser blocked clipboard). You can manually select and copy.",
+    copyFail:
+      "Copy failed (browser blocked clipboard). You can manually select and copy.",
     readAloud: "Read aloud",
     stop: "Stop",
     repeat: "Repeat",
@@ -179,7 +181,6 @@ async function normalizeToJpegIfHeic(file: File): Promise<File> {
   }
 
   const heic2any = (await import("heic2any")).default;
-
   const converted = (await heic2any({
     blob: file,
     toType: "image/jpeg",
@@ -335,6 +336,17 @@ function speak(text: string, lang: Lang) {
   }
 }
 
+// Read response as JSON if possible; otherwise as text
+async function readResponseBody(resp: Response): Promise<{ json: any | null; text: string }> {
+  try {
+    const j = await resp.json();
+    return { json: j, text: "" };
+  } catch {
+    const t = await resp.text().catch(() => "");
+    return { json: null, text: t };
+  }
+}
+
 export default function DoculeaTestPage() {
   const [lang, setLang] = useState<Lang>("es");
   const [showLangOnboarding, setShowLangOnboarding] = useState(false);
@@ -355,6 +367,10 @@ export default function DoculeaTestPage() {
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
 
+  // ✅ Critical: remember last photo for retry
+  const lastPhotoRef = useRef<File | null>(null);
+  const lastModeRef = useRef<"photo" | "text">("photo");
+
   useEffect(() => {
     const stored = getStoredLang();
     if (stored) {
@@ -366,16 +382,11 @@ export default function DoculeaTestPage() {
     }
 
     const speakStored = getStoredSpeak();
-    // Default ON for Spanish testing, ON for English too (can toggle)
-    if (speakStored === null) {
-      setSpeakOn(true);
-    } else {
-      setSpeakOn(speakStored);
-    }
+    if (speakStored === null) setSpeakOn(true);
+    else setSpeakOn(speakStored);
   }, []);
 
   useEffect(() => {
-    // persist language when user changes it
     setStoredLang(lang);
   }, [lang]);
 
@@ -387,6 +398,7 @@ export default function DoculeaTestPage() {
   const loading = step === "preparing" || step === "ocr" || step === "analyzing";
 
   async function runFromText() {
+    lastModeRef.current = "text";
     setError(null);
     setResult(null);
     setExtractedText(null);
@@ -399,8 +411,20 @@ export default function DoculeaTestPage() {
         body: JSON.stringify({ text: text.trim(), language: lang }),
       });
 
-      const json = await r.json();
-      if (!r.ok) throw new Error(json?.error || `Request failed (HTTP ${r.status})`);
+      const { json, text: rawText } = await readResponseBody(r);
+
+      if (!r.ok || json?.ok === false || json?.error) {
+        console.error("[DOCULEA] analyze(text) failed", { status: r.status, json, rawText });
+        const msg =
+          json?.error || json?.message || rawText || `Request failed (HTTP ${r.status})`;
+        const details =
+          json?.details
+            ? typeof json.details === "string"
+              ? json.details
+              : JSON.stringify(json.details, null, 2)
+            : "";
+        throw new Error(details ? `${msg}\n\n${details}` : msg);
+      }
 
       setResult(json);
       setStep("done");
@@ -422,6 +446,7 @@ export default function DoculeaTestPage() {
     e.currentTarget.value = "";
     if (!f) return;
 
+    lastModeRef.current = "photo";
     setError(null);
     setResult(null);
     setExtractedText(null);
@@ -439,12 +464,14 @@ export default function DoculeaTestPage() {
       return;
     }
 
+    // ✅ store for retry
     setPhotoFile(finalFile);
+    lastPhotoRef.current = finalFile;
 
     if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
     setPhotoPreviewUrl(URL.createObjectURL(finalFile));
 
-    // ✅ Auto-run: no "Analyze Photo" button
+    // ✅ Auto-run
     try {
       await runFromPhoto(finalFile, lang);
     } catch (err: any) {
@@ -454,13 +481,16 @@ export default function DoculeaTestPage() {
   }
 
   async function runFromPhoto(file: File, language: Lang) {
+    lastModeRef.current = "photo";
+    lastPhotoRef.current = file;
+
     setError(null);
     setResult(null);
     setExtractedText(null);
 
     setStep("preparing");
-
     const normalized = await normalizeToJpegIfHeic(file);
+    lastPhotoRef.current = normalized;
 
     setStep("ocr");
     const ocrText = await ocrInBrowser(normalized, language);
@@ -483,9 +513,19 @@ export default function DoculeaTestPage() {
       body: JSON.stringify({ text: ocrText.trim(), language }),
     });
 
-    const json = await resp.json();
-    if (!resp.ok) {
-      throw new Error(json?.error || `Analyze failed (${resp.status})`);
+    const { json, text: rawText } = await readResponseBody(resp);
+
+    if (!resp.ok || json?.ok === false || json?.error) {
+      console.error("[DOCULEA] analyze(photo) failed", { status: resp.status, json, rawText });
+      const msg =
+        json?.error || json?.message || rawText || `Analyze failed (${resp.status})`;
+      const details =
+        json?.details
+          ? typeof json.details === "string"
+            ? json.details
+            : JSON.stringify(json.details, null, 2)
+          : "";
+      throw new Error(details ? `${msg}\n\n${details}` : msg);
     }
 
     setResult(json);
@@ -494,6 +534,38 @@ export default function DoculeaTestPage() {
     if (speakOn && json?.plain_language_summary) {
       speak(String(json.plain_language_summary), language);
     }
+  }
+
+  async function retryLast() {
+    console.log("[DOCULEA] retryLast()", {
+      hasLastPhoto: !!lastPhotoRef.current,
+      hasPhotoFile: !!photoFile,
+      lastMode: lastModeRef.current,
+      step,
+      lang,
+    });
+
+    setError(null);
+    setResult(null);
+    setExtractedText(null);
+
+    const file = lastPhotoRef.current || photoFile;
+    if (file) {
+      try {
+        await runFromPhoto(file, lang);
+      } catch (err: any) {
+        setStep("error");
+        setError(err?.message || "Unknown error");
+      }
+      return;
+    }
+
+    if (canAnalyze) {
+      await runFromText();
+      return;
+    }
+
+    setStep("idle");
   }
 
   const pickCamera = () => cameraInputRef.current?.click();
@@ -696,12 +768,7 @@ export default function DoculeaTestPage() {
           {/* Speech controls */}
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10, alignItems: "center" }}>
             <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 800, color: "#111827" }}>
-              <input
-                type="checkbox"
-                checked={speakOn}
-                onChange={(e) => setSpeakOn(e.target.checked)}
-                disabled={loading}
-              />
+              <input type="checkbox" checked={speakOn} onChange={(e) => setSpeakOn(e.target.checked)} disabled={loading} />
               {t(lang, "readAloud")}
             </label>
 
@@ -792,12 +859,7 @@ export default function DoculeaTestPage() {
               <strong>Error:</strong> {error}
               <div style={{ marginTop: 10 }}>
                 <button
-                  onClick={() => {
-                    setError(null);
-                    setStep("idle");
-                    setResult(null);
-                    setExtractedText(null);
-                  }}
+                  onClick={() => void retryLast()}
                   style={{
                     border: "1px solid #e5e7eb",
                     borderRadius: 12,
@@ -817,7 +879,7 @@ export default function DoculeaTestPage() {
 
         <div style={{ height: 12 }} />
 
-        {/* Paste text flow (kept for dev/testing; translated) */}
+        {/* Paste text flow */}
         <Card title={t(lang, "pasteTitle")}>
           <textarea
             value={text}
@@ -840,7 +902,7 @@ export default function DoculeaTestPage() {
             <div style={{ color: "#6b7280", fontSize: 12 }}>{t(lang, "minChars")}</div>
 
             <button
-              onClick={runFromText}
+              onClick={() => void runFromText()}
               disabled={!canAnalyze || loading}
               style={{
                 border: "1px solid #e5e7eb",

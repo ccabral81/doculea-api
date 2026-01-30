@@ -11,17 +11,15 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const DEBUG = process.env.NODE_ENV !== "production";
 
 // Hard limits
-const MAX_CHARS = 20000; // protect cost/perf
+const MAX_CHARS = 20000;
 
-// Long-doc handling (local, no extra model call)
+// Long-doc handling (local)
 const CONDENSE_THRESHOLD_CHARS = 4500;
 const CONDENSE_TARGET_CHARS = 3500;
 
 // OpenAI controls
 const OPENAI_TIMEOUT_MS = 30_000;
-const OPENAI_MAX_TOKENS = 800;
-
-// ---------- utils ----------
+const OPENAI_MAX_TOKENS = 1200; // ↑ helps avoid truncated/invalid shape
 
 function withTimeout<T>(promise: PromiseLike<T>, ms: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -68,12 +66,13 @@ function renumberSteps(result: DoculeaResponse): DoculeaResponse {
 }
 
 function normalizeLang(input: unknown): "en" | "es" {
-  if (input === "es" || input === "spanish") return "es";
+  const v = String(input || "").toLowerCase().trim();
+  if (v === "es" || v.startsWith("es-") || v === "spanish" || v === "espanol" || v === "español") return "es";
+  if (v === "en" || v.startsWith("en-") || v === "english") return "en";
   return "en";
 }
 
 function pickDocumentText(body: any): string | undefined {
-  // Accept both old + new payload shapes
   return (
     body?.documentText ??
     body?.text ??
@@ -83,7 +82,82 @@ function pickDocumentText(body: any): string | undefined {
   );
 }
 
-// ---------- handler ----------
+// Deterministic coercion: maps common field variants into expected schema keys (no extra model calls)
+function coerceToDoculeaShape(input: any, language: "en" | "es") {
+  const o: any = input && typeof input === "object" ? { ...input } : {};
+
+  // Summary
+  if (!o.plain_language_summary && o.plain_summary) o.plain_language_summary = o.plain_summary;
+  if (!o.plain_language_summary && o.summary) o.plain_language_summary = o.summary;
+
+  // Meaning
+  if (!o.what_this_means_for_you && o.what_it_means) o.what_this_means_for_you = o.what_it_means;
+  if (!o.what_this_means_for_you && o.meaning) o.what_this_means_for_you = o.meaning;
+
+  // Legitimacy
+  if (!o.legitimacy_assessment && o.legitimacy) {
+    const statusRaw = String(o.legitimacy || "").toLowerCase();
+    const status =
+      statusRaw.includes("susp") ? "suspicious" :
+      statusRaw.includes("unclear") ? "unclear" :
+      statusRaw.includes("legit") ? "likely_legit" :
+      "unclear";
+
+    o.legitimacy_assessment = {
+      status,
+      confidence: o.legitimacy_confidence ?? 0.6,
+      summary_reason: o.legitimacy_reason ?? o.reason ?? "",
+    };
+  }
+
+  // Document type
+  if (typeof o.document_type === "string") {
+    o.document_type = { category: o.document_type, confidence: 0.6 };
+  }
+  if (!o.document_type && o.category) {
+    o.document_type = { category: o.category, confidence: 0.6 };
+  }
+
+  // Steps mapping
+  if (!o.step_by_step_actions && o.next_steps) {
+    if (Array.isArray(o.next_steps)) {
+      o.step_by_step_actions = o.next_steps.map((s: any, idx: number) => {
+        if (typeof s === "string") {
+          return {
+            step: idx + 1,
+            title: language === "es" ? `Paso ${idx + 1}` : `Step ${idx + 1}`,
+            description: s,
+            urgency: "medium",
+          };
+        }
+        return {
+          step: s.step ?? (idx + 1),
+          title: s.title ?? s.action ?? (language === "es" ? `Paso ${idx + 1}` : `Step ${idx + 1}`),
+          description: s.description ?? s.details ?? s.text ?? "",
+          urgency: s.urgency ?? "medium",
+        };
+      });
+    }
+  }
+
+  // Scripts mapping
+  if (!o.suggested_scripts && o.scripts) {
+    o.suggested_scripts = {
+      call_script: o.scripts.call_script ?? o.scripts.call ?? "",
+      email_template: o.scripts.email_template ?? o.scripts.email ?? "",
+    };
+  }
+
+  // Safety notes
+  if (Array.isArray(o.safety_notes)) o.safety_notes = o.safety_notes.join("\n");
+
+  // Red flags
+  if (typeof o.red_flags === "string") {
+    o.red_flags = o.red_flags.split("\n").map((x: string) => x.trim()).filter(Boolean);
+  }
+
+  return o;
+}
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
@@ -102,20 +176,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     const trimmedText = documentText.trim();
-
     if (trimmedText.length < 40) {
       return res.status(400).json({ error: "Text is too short. Please provide more of the document." });
     }
 
     const language: "en" | "es" = normalizeLang(lang);
 
-    // Long-doc handling: condense locally; do NOT change AI logic.
     let textForAI = trimmedText;
     if (textForAI.length > CONDENSE_THRESHOLD_CHARS) {
       textForAI = condenseTextLocal(textForAI, CONDENSE_TARGET_CHARS);
     }
-
-    // Hard truncate as last resort
     textForAI = clipToMaxChars(textForAI, MAX_CHARS);
 
     const userPrompt = buildDoculeaUserPrompt(textForAI, language);
@@ -141,26 +211,33 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     try {
       json = JSON.parse(raw);
     } catch {
-      return res.status(500).json({ error: "AI returned invalid JSON." });
+      return res.status(502).json({ error: "AI returned invalid JSON." });
     }
 
-    const parsed = DoculeaResponseSchema.safeParse(json);
+    // ✅ deterministic coercion first
+    const coerced = coerceToDoculeaShape(json as any, language);
+
+    const parsed = DoculeaResponseSchema.safeParse(coerced);
     if (!parsed.success) {
+      // ✅ 422 instead of 500 for validation failures
       if (DEBUG) {
-        return res.status(500).json({ error: "AI output failed schema validation.", details: parsed.error.format() });
+        return res.status(422).json({
+          error: "AI output failed schema validation.",
+          details: parsed.error.format(),
+        });
       }
-      return res.status(500).json({ error: "AI output failed schema validation." });
+      return res.status(422).json({ error: "AI output failed schema validation." });
     }
 
     let result = parsed.data as DoculeaResponse;
 
     if (!result.step_by_step_actions || result.step_by_step_actions.length < 2) {
-      return res.status(500).json({ error: "AI output missing minimum step-by-step actions." });
+      return res.status(422).json({ error: "AI output missing minimum step-by-step actions." });
     }
 
     result = renumberSteps(result);
 
-    // Apply hard safety overrides (use original text for scam signals)
+    // Safety override after model output
     result = applyHardSafetyOverride(result, trimmedText, language);
 
     const { bucket, category } = mapOutputToBucket(result);
@@ -170,6 +247,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (err?.message === "OpenAI request timed out") {
       return res.status(504).json({ error: "The analysis took too long. Please try again." });
     }
+    // IMPORTANT: surface real error message
     return res.status(500).json({ error: err?.message || "Server error" });
   }
 }
+
