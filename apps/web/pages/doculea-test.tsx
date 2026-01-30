@@ -127,6 +127,26 @@ function setStoredLang(lang: Lang) {
   window.localStorage.setItem(STORAGE_LANG_KEY, lang);
 }
 
+
+function withFollowStepsSuffix(summary: string, lang: Lang) {
+  const s = (summary || "").trim();
+  if (!s) return s;
+
+  const suffix =
+    lang === "es"
+      ? " Sigue los pasos a continuación para más información."
+      : " Follow the steps below for more information.";
+
+  // avoid doubling if already present
+  if (s.toLowerCase().includes("follow the steps below")) return s;
+  if (s.toLowerCase().includes("sigue los pasos a continuación")) return s;
+
+  return s.endsWith(".") ? s + suffix.slice(1) : s + suffix;
+}
+
+
+
+
 function getStoredSpeak(): boolean | null {
   if (typeof window === "undefined") return null;
   const v = window.localStorage.getItem(STORAGE_SPEAK_KEY);
@@ -327,7 +347,8 @@ function speak(text: string, lang: Lang) {
   try {
     window.speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
-    u.lang = lang === "es" ? "es-US" : "en-US";
+    u.lang = lang === "es" ? "es-MX" : "en-US"; // LatAm-ish
+// If you prefer Spanish US instead, use "es-US"
     u.rate = 1.0;
     u.pitch = 1.0;
     window.speechSynthesis.speak(u);
@@ -430,7 +451,7 @@ export default function DoculeaTestPage() {
       setStep("done");
 
       if (speakOn && json?.plain_language_summary) {
-        speak(String(json.plain_language_summary), lang);
+        speak(withFollowStepsSuffix(String(json.plain_language_summary || ""), lang), lang);
       }
     } catch (e: any) {
       setStep("error");
@@ -939,7 +960,9 @@ export default function DoculeaTestPage() {
 
               <div style={{ marginTop: 12, color: "#111827" }}>
                 <div style={{ fontWeight: 900, fontSize: 16 }}>{t(lang, "summary")}</div>
-                <div style={{ marginTop: 6 }}>{result.plain_language_summary}</div>
+                <div style={{ marginTop: 6 }}>
+                  {withFollowStepsSuffix(String(result.plain_language_summary || ""), lang)}
+                  </div>
               </div>
 
               <div style={{ marginTop: 12, color: "#111827" }}>
