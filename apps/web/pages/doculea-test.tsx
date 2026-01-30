@@ -1,465 +1,927 @@
 "use client";
-
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { ocrInBrowser, isOcrTextUsable } from "@/ocr/browserOcr";
 
-// If you already have your own OCR util, import it instead:
-// import { runBrowserOcr } from "../lib/browserOcr";
-type Lang = "es" | "en";
-
+type Lang = "en" | "es";
 type Step = "idle" | "preparing" | "ocr" | "analyzing" | "done" | "error";
+
+const STORAGE_LANG_KEY = "doculea_lang";
+const STORAGE_SPEAK_KEY = "doculea_speak";
 
 const COPY: Record<Lang, Record<string, string>> = {
   es: {
+    tagline: "Entiende el documento. Verifica si es legítimo. Sigue pasos claros.",
     chooseLangTitle: "Elige tu idioma",
     spanish: "Español",
     english: "English",
     languageMenu: "Idioma",
-    tips: "1) Acércate  2) Buena luz  3) Evita reflejos",
+    tipsTitle: "Consejos para una buena foto",
+    tips1: "1) Acércate al documento",
+    tips2: "2) Buena luz (sin reflejos)",
+    tips3: "3) Llena el encuadre",
     takePhoto: "Tomar foto",
     choosePhoto: "Elegir de la galería",
+    retake: "Tomar otra",
     preparingPhoto: "Preparando la foto…",
     readingText: "Leyendo el texto…",
     understandingDoc: "Entendiendo el documento…",
+    analyzing: "Analizando…",
     weakOcrTitle: "No pudimos leer esto con claridad",
     weakOcrBody: "Intenta de nuevo más cerca y con buena luz. Evita reflejos.",
     tryAgain: "Intentar de nuevo",
+    preview: "Ver texto detectado",
+    hidePreview: "Ocultar texto detectado",
+    pasteTitle: "Pega una carta / email / mensaje",
+    pastePlaceholder: "Pega el texto del documento aquí…",
+    minChars: "Mínimo 20 caracteres. El máximo se limita en el servidor.",
+    analyzeText: "Analizar",
+    resultTitle: "Resultado",
+    type: "Tipo",
+    confidence: "Confianza",
+    summary: "Resumen",
+    whatItMeans: "Qué significa para ti",
+    nextSteps: "Qué hacer ahora",
+    redFlags: "Señales de alerta",
+    scripts: "Guiones",
+    callScript: "Guion para llamada",
+    emailTemplate: "Plantilla de email",
+    safetyNotes: "Notas de seguridad",
+    copy: "Copiar",
+    copied: "Copiado",
+    copyFail: "No se pudo copiar (el navegador bloqueó el portapapeles). Puedes seleccionar y copiar manualmente.",
     readAloud: "Leer en voz alta",
     stop: "Detener",
     repeat: "Repetir",
-    previewText: "Ver texto detectado",
-    hidePreview: "Ocultar texto detectado",
-    resultTitle: "Resultado",
-    summary: "Resumen",
-    whatItMeans: "Qué significa",
-    nextSteps: "Qué hacer ahora",
-    scripts: "Guiones",
-    safetyNotes: "Notas de seguridad",
+    statusLikelyLegit: "Probablemente legítimo",
+    statusUnclear: "No está claro",
+    statusSuspicious: "Sospechoso",
+    urgencyHigh: "Alta urgencia",
+    urgencyMedium: "Urgencia media",
+    urgencyLow: "Baja urgencia",
   },
   en: {
+    tagline: "Understand the document. Check legitimacy. Get clear next steps.",
     chooseLangTitle: "Choose your language",
     spanish: "Español",
     english: "English",
     languageMenu: "Language",
-    tips: "1) Get close  2) Good light  3) Avoid glare",
+    tipsTitle: "Photo tips",
+    tips1: "1) Get close to the document",
+    tips2: "2) Bright light (avoid glare)",
+    tips3: "3) Fill the frame",
     takePhoto: "Take photo",
     choosePhoto: "Choose from library",
+    retake: "Retake",
     preparingPhoto: "Preparing photo…",
     readingText: "Reading text…",
     understandingDoc: "Understanding document…",
+    analyzing: "Analyzing…",
     weakOcrTitle: "We couldn’t read this clearly",
     weakOcrBody: "Try again closer with better light. Avoid glare.",
     tryAgain: "Try again",
+    preview: "Preview extracted text",
+    hidePreview: "Hide extracted text",
+    pasteTitle: "Paste a letter / email / message",
+    pastePlaceholder: "Paste the document text here…",
+    minChars: "Min 20 chars. Max is enforced server-side.",
+    analyzeText: "Analyze",
+    resultTitle: "Result",
+    type: "Type",
+    confidence: "Confidence",
+    summary: "Summary",
+    whatItMeans: "What this means for you",
+    nextSteps: "What to do next",
+    redFlags: "Red flags",
+    scripts: "Scripts",
+    callScript: "Call script",
+    emailTemplate: "Email template",
+    safetyNotes: "Safety notes",
+    copy: "Copy",
+    copied: "Copied",
+    copyFail: "Copy failed (browser blocked clipboard). You can manually select and copy.",
     readAloud: "Read aloud",
     stop: "Stop",
     repeat: "Repeat",
-    previewText: "Preview extracted text",
-    hidePreview: "Hide extracted text",
-    resultTitle: "Result",
-    summary: "Summary",
-    whatItMeans: "What it means",
-    nextSteps: "What to do next",
-    scripts: "Scripts",
-    safetyNotes: "Safety notes",
+    statusLikelyLegit: "Likely legit",
+    statusUnclear: "Unclear",
+    statusSuspicious: "Suspicious",
+    urgencyHigh: "High urgency",
+    urgencyMedium: "Medium urgency",
+    urgencyLow: "Low urgency",
   },
 };
 
 function t(lang: Lang, key: string) {
-  return COPY[lang][key] ?? COPY.en[key] ?? key;
+  return COPY[lang]?.[key] ?? COPY.en[key] ?? key;
 }
 
-function normalizeLang(input: any): Lang {
-  // Defensive: prevents sending "Español"/"English" to API
-  if (input === "Español") return "es";
-  if (input === "English") return "en";
-  return input === "en" ? "en" : "es";
+function getStoredLang(): Lang | null {
+  if (typeof window === "undefined") return null;
+  const v = window.localStorage.getItem(STORAGE_LANG_KEY);
+  return v === "es" || v === "en" ? v : null;
+}
+function setStoredLang(lang: Lang) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(STORAGE_LANG_KEY, lang);
+}
+
+function getStoredSpeak(): boolean | null {
+  if (typeof window === "undefined") return null;
+  const v = window.localStorage.getItem(STORAGE_SPEAK_KEY);
+  if (v === null) return null;
+  return v === "1";
+}
+function setStoredSpeak(on: boolean) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(STORAGE_SPEAK_KEY, on ? "1" : "0");
+}
+
+function StatusBadge({ status, lang }: { status: string; lang: Lang }) {
+  const map: Record<string, { bg: string; label: string; dot: string }> = {
+    likely_legit: { bg: "#16a34a", label: t(lang, "statusLikelyLegit"), dot: "●" },
+    unclear: { bg: "#f59e0b", label: t(lang, "statusUnclear"), dot: "●" },
+    suspicious: { bg: "#dc2626", label: t(lang, "statusSuspicious"), dot: "●" },
+  };
+  const cfg = map[status] || { bg: "#6b7280", label: status, dot: "●" };
+
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 8,
+        background: cfg.bg,
+        color: "white",
+        padding: "7px 12px",
+        borderRadius: 999,
+        fontWeight: 700,
+        fontSize: 13,
+        letterSpacing: 0.2,
+      }}
+    >
+      <span style={{ fontSize: 12, opacity: 0.95 }}>{cfg.dot}</span>
+      {cfg.label}
+    </span>
+  );
+}
+
+async function normalizeToJpegIfHeic(file: File): Promise<File> {
+  const isHeic =
+    file.type === "image/heic" ||
+    file.type === "image/heif" ||
+    file.name.toLowerCase().endsWith(".heic") ||
+    file.name.toLowerCase().endsWith(".heif");
+
+  if (!isHeic) return file;
+
+  if (typeof window === "undefined") {
+    throw new Error("HEIC conversion must run in the browser");
+  }
+
+  const heic2any = (await import("heic2any")).default;
+
+  const converted = (await heic2any({
+    blob: file,
+    toType: "image/jpeg",
+    quality: 0.92,
+  })) as Blob;
+
+  return new File([converted], file.name.replace(/\.(heic|heif)$/i, ".jpg"), {
+    type: "image/jpeg",
+  });
+}
+
+function ProgressBar({ step, lang }: { step: Step; lang: Lang }) {
+  const pct =
+    step === "preparing" ? 12 : step === "ocr" ? 48 : step === "analyzing" ? 85 : step === "done" ? 100 : 0;
+
+  const label =
+    step === "preparing"
+      ? t(lang, "preparingPhoto")
+      : step === "ocr"
+        ? t(lang, "readingText")
+        : step === "analyzing"
+          ? t(lang, "understandingDoc")
+          : "";
+
+  if (step === "idle" || step === "error") return null;
+
+  return (
+    <div style={{ marginTop: 10 }}>
+      <div style={{ color: "#111827", fontWeight: 800, fontSize: 13 }}>{label}</div>
+      <div
+        style={{
+          marginTop: 8,
+          height: 10,
+          borderRadius: 999,
+          background: "#e5e7eb",
+          overflow: "hidden",
+          border: "1px solid #e5e7eb",
+        }}
+      >
+        <div style={{ width: `${pct}%`, height: "100%", background: "#111827", borderRadius: 999 }} />
+      </div>
+    </div>
+  );
+}
+
+function StepCard({ step, lang }: { step: any; lang: Lang }) {
+  const color = step.urgency === "high" ? "#dc2626" : step.urgency === "medium" ? "#f59e0b" : "#6b7280";
+  const urgencyLabel =
+    step.urgency === "high" ? t(lang, "urgencyHigh") : step.urgency === "medium" ? t(lang, "urgencyMedium") : t(lang, "urgencyLow");
+
+  return (
+    <div
+      style={{
+        border: "1px solid #e5e7eb",
+        borderLeft: `5px solid ${color}`,
+        borderRadius: 12,
+        padding: 12,
+        background: "#f9fafb",
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+        <div style={{ fontWeight: 800 }}>
+          {step.step}. {step.title}
+        </div>
+        <div style={{ color: "#6b7280", fontSize: 12, whiteSpace: "nowrap" }}>{urgencyLabel}</div>
+      </div>
+      <div style={{ marginTop: 6, color: "#111827" }}>{step.description}</div>
+    </div>
+  );
+}
+
+function CopyBlock({ label, text, lang }: { label: string; text: string; lang: Lang }) {
+  const [copied, setCopied] = useState(false);
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {
+      alert(t(lang, "copyFail"));
+    }
+  };
+
+  return (
+    <div style={{ marginTop: 10 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+        <div style={{ fontWeight: 800 }}>{label}</div>
+        <button
+          onClick={copy}
+          style={{
+            border: "1px solid #e5e7eb",
+            borderRadius: 10,
+            padding: "8px 10px",
+            background: copied ? "#16a34a" : "white",
+            color: copied ? "white" : "#111827",
+            fontWeight: 700,
+            cursor: "pointer",
+          }}
+        >
+          {copied ? t(lang, "copied") : t(lang, "copy")}
+        </button>
+      </div>
+
+      <pre
+        style={{
+          marginTop: 8,
+          background: "#f3f4f6",
+          border: "1px solid #e5e7eb",
+          padding: 12,
+          borderRadius: 12,
+          whiteSpace: "pre-wrap",
+          wordBreak: "break-word",
+          fontSize: 13,
+          lineHeight: 1.35,
+        }}
+      >
+        {text}
+      </pre>
+    </div>
+  );
+}
+
+function Card({ title, children }: { title?: string; children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        border: "1px solid #e5e7eb",
+        borderRadius: 14,
+        padding: 14,
+        background: "white",
+      }}
+    >
+      {title ? <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 10 }}>{title}</div> : null}
+      {children}
+    </div>
+  );
 }
 
 function speak(text: string, lang: Lang) {
   if (typeof window === "undefined") return;
   if (!("speechSynthesis" in window)) return;
 
-  window.speechSynthesis.cancel();
-  const u = new SpeechSynthesisUtterance(text);
-  u.lang = lang === "es" ? "es-US" : "en-US";
-  u.rate = 1.0;
-  u.pitch = 1.0;
-  window.speechSynthesis.speak(u);
+  try {
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = lang === "es" ? "es-US" : "en-US";
+    u.rate = 1.0;
+    u.pitch = 1.0;
+    window.speechSynthesis.speak(u);
+  } catch {
+    // ignore
+  }
 }
-
-function stopSpeak() {
-  if (typeof window === "undefined") return;
-  if (!("speechSynthesis" in window)) return;
-  window.speechSynthesis.cancel();
-}
-
-// --- Replace this with your existing browser OCR function ---
-async function runBrowserOcrMock(_file: File, _lang: Lang): Promise<string> {
-  // TODO: swap with your real OCR call:
-  // return await runBrowserOcr(file, lang)
-  throw new Error(
-    "OCR function not wired. Replace runBrowserOcrMock() with your real browser OCR function import."
-  );
-}
-// ------------------------------------------------------------
 
 export default function DoculeaTestPage() {
   const [lang, setLang] = useState<Lang>("es");
-  const [showLangModal, setShowLangModal] = useState(false);
+  const [showLangOnboarding, setShowLangOnboarding] = useState(false);
+
+  const [speakOn, setSpeakOn] = useState(true);
+
+  const [text, setText] = useState("FINAL NOTICE: Pay $500 in gift cards or you will be arrested.");
+  const [result, setResult] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const [step, setStep] = useState<Step>("idle");
-  const [progress, setProgress] = useState(0);
+  const [extractedText, setExtractedText] = useState<string | null>(null);
+  const [showExtracted, setShowExtracted] = useState(false);
 
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
-  const [ocrText, setOcrText] = useState<string>("");
-  const [showOcrPreview, setShowOcrPreview] = useState(false);
-
-  const [result, setResult] = useState<any>(null);
-  const [errorMsg, setErrorMsg] = useState<string>("");
-
-  const [readAloudEnabled, setReadAloudEnabled] = useState(true);
-  const lastSummaryRef = useRef<string>("");
-
-  const lastFileRef = useRef<File | null>(null);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
   const libraryInputRef = useRef<HTMLInputElement | null>(null);
 
-  useEffect(() => {
-    const stored = localStorage.getItem("doculea_lang");
-    const normalized = normalizeLang(stored);
-    setLang(normalized);
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
 
-    // first-time onboarding
-    if (!stored) setShowLangModal(true);
+  useEffect(() => {
+    const stored = getStoredLang();
+    if (stored) {
+      setLang(stored);
+      setShowLangOnboarding(false);
+    } else {
+      setLang("es"); // Spanish-first for mom testing
+      setShowLangOnboarding(true);
+    }
+
+    const speakStored = getStoredSpeak();
+    // Default ON for Spanish testing, ON for English too (can toggle)
+    if (speakStored === null) {
+      setSpeakOn(true);
+    } else {
+      setSpeakOn(speakStored);
+    }
   }, []);
 
-  function saveLang(newLang: Lang) {
-    const normalized = normalizeLang(newLang);
-    setLang(normalized);
-    localStorage.setItem("doculea_lang", normalized);
-  }
+  useEffect(() => {
+    // persist language when user changes it
+    setStoredLang(lang);
+  }, [lang]);
 
-  function setStepWithProgress(next: Step) {
-    setStep(next);
-    if (next === "preparing") setProgress(10);
-    if (next === "ocr") setProgress(45);
-    if (next === "analyzing") setProgress(85);
-    if (next === "done") setProgress(100);
-    if (next === "error") setProgress(0);
-  }
+  useEffect(() => {
+    setStoredSpeak(speakOn);
+  }, [speakOn]);
 
-  function rememberFile(file: File) {
-    lastFileRef.current = file;
-  }
+  const canAnalyze = useMemo(() => text.trim().length >= 20, [text]);
+  const loading = step === "preparing" || step === "ocr" || step === "analyzing";
 
-  function clearInputs() {
-    // So selecting same file again triggers onChange
-    if (cameraInputRef.current) cameraInputRef.current.value = "";
-    if (libraryInputRef.current) libraryInputRef.current.value = "";
-  }
-
-  function setImagePreview(file: File) {
-    if (imageUrl) URL.revokeObjectURL(imageUrl);
-    const url = URL.createObjectURL(file);
-    setImageUrl(url);
-  }
-
-  function ocrQualityGate(text: string) {
-    const cleaned = text.replace(/\s+/g, " ").trim();
-    const charCount = cleaned.length;
-    const wordCount = cleaned.split(" ").filter(Boolean).length;
-
-    // Tune thresholds as needed
-    const MIN_CHARS = 120;
-    const MIN_WORDS = 25;
-
-    return { ok: charCount >= MIN_CHARS && wordCount >= MIN_WORDS, charCount, wordCount };
-  }
-
-  async function startPipeline(file: File) {
-    const langNormalized = normalizeLang(lang);
-
-    setErrorMsg("");
+  async function runFromText() {
+    setError(null);
     setResult(null);
-    lastSummaryRef.current = "";
-
-    rememberFile(file);
-    clearInputs();
-    setImagePreview(file);
+    setExtractedText(null);
+    setStep("analyzing");
 
     try {
-      setStepWithProgress("preparing");
-
-      // 1) OCR
-      setStepWithProgress("ocr");
-      // IMPORTANT: swap mock with your real OCR function
-      const text = await runBrowserOcrMock(file, langNormalized);
-      setOcrText(text);
-
-      const q = ocrQualityGate(text);
-      if (!q.ok) {
-        setErrorMsg(`${t(langNormalized, "weakOcrTitle")}\n${t(langNormalized, "weakOcrBody")}`);
-        setStepWithProgress("error");
-        return;
-      }
-
-      // 2) Analyze
-      setStepWithProgress("analyzing");
-
-      const res = await fetch("/api/doculea/analyze", {
+      const r = await fetch("/api/doculea/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          text,
-          language: langNormalized, // MUST be "es" | "en"
-        }),
+        body: JSON.stringify({ text: text.trim(), language: lang }),
       });
 
-      const data = await res.json().catch(() => null);
+      const json = await r.json();
+      if (!r.ok) throw new Error(json?.error || `Request failed (HTTP ${r.status})`);
 
-      if (!res.ok) {
-        console.error("Analyze HTTP error:", res.status, data);
-        throw new Error(data?.error || data?.message || `Analyze failed (${res.status})`);
+      setResult(json);
+      setStep("done");
+
+      if (speakOn && json?.plain_language_summary) {
+        speak(String(json.plain_language_summary), lang);
       }
-
-      // If your API wraps errors as ok:false
-      if (data?.ok === false) {
-        console.error("Analyze returned ok:false:", data);
-        throw new Error(data?.error || "AI failed validation");
-      }
-
-      setResult(data);
-      setStepWithProgress("done");
-
-      // Speak summary (best-effort)
-      const summary =
-        data?.plain_summary ||
-        data?.plain_language_summary ||
-        data?.summary ||
-        "";
-      if (summary) {
-        lastSummaryRef.current = summary;
-        if (readAloudEnabled) speak(summary, langNormalized);
-      }
-    } catch (err: any) {
-      console.error("Pipeline error:", err);
-      setErrorMsg(err?.message || "Unknown error");
-      setStepWithProgress("error");
+    } catch (e: any) {
+      setStep("error");
+      setError(e?.message || "Unknown error");
     }
   }
 
-  async function onFileChosen(file: File) {
-    await startPipeline(file);
-  }
+  async function onPickPhoto(e: React.ChangeEvent<HTMLInputElement>) {
+    if (typeof window === "undefined") return;
 
-  async function retrySameFile() {
-    const f = lastFileRef.current;
+    const f = e.target.files?.[0] || null;
+    // reset the input value so choosing the same file again still triggers onChange
+    e.currentTarget.value = "";
     if (!f) return;
-    await startPipeline(f);
+
+    setError(null);
+    setResult(null);
+    setExtractedText(null);
+
+    let finalFile = f;
+    try {
+      finalFile = await normalizeToJpegIfHeic(f);
+    } catch {
+      setStep("error");
+      setError(
+        lang === "es"
+          ? "Esta foto es HEIC y no se pudo convertir en este navegador. Por favor toma otra foto o cambia el iPhone a 'Más compatible'."
+          : "This photo is HEIC and couldn’t be converted in this browser. Please retake or switch iPhone Camera Formats to 'Most Compatible'."
+      );
+      return;
+    }
+
+    setPhotoFile(finalFile);
+
+    if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
+    setPhotoPreviewUrl(URL.createObjectURL(finalFile));
+
+    // ✅ Auto-run: no "Analyze Photo" button
+    try {
+      await runFromPhoto(finalFile, lang);
+    } catch (err: any) {
+      setStep("error");
+      setError(err?.message || "Unknown error");
+    }
   }
 
-  const statusLabel = useMemo(() => {
-    const L = normalizeLang(lang);
-    if (step === "preparing") return t(L, "preparingPhoto");
-    if (step === "ocr") return t(L, "readingText");
-    if (step === "analyzing") return t(L, "understandingDoc");
-    if (step === "done") return "✓";
-    return "";
-  }, [step, lang]);
+  async function runFromPhoto(file: File, language: Lang) {
+    setError(null);
+    setResult(null);
+    setExtractedText(null);
 
-  const L = normalizeLang(lang);
+    setStep("preparing");
+
+    const normalized = await normalizeToJpegIfHeic(file);
+
+    setStep("ocr");
+    const ocrText = await ocrInBrowser(normalized, language);
+    setExtractedText(ocrText);
+
+    const q = isOcrTextUsable(ocrText);
+    if (!q.ok) {
+      setStep("error");
+      const msg =
+        language === "es"
+          ? `${t(language, "weakOcrTitle")} (caracteres=${q.charCount}, palabras=${q.wordCount}).\n\n${t(language, "weakOcrBody")}`
+          : `${t(language, "weakOcrTitle")} (chars=${q.charCount}, words=${q.wordCount}).\n\n${t(language, "weakOcrBody")}`;
+      throw new Error(msg);
+    }
+
+    setStep("analyzing");
+    const resp = await fetch("/api/doculea/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: ocrText.trim(), language }),
+    });
+
+    const json = await resp.json();
+    if (!resp.ok) {
+      throw new Error(json?.error || `Analyze failed (${resp.status})`);
+    }
+
+    setResult(json);
+    setStep("done");
+
+    if (speakOn && json?.plain_language_summary) {
+      speak(String(json.plain_language_summary), language);
+    }
+  }
+
+  const pickCamera = () => cameraInputRef.current?.click();
+  const pickLibrary = () => libraryInputRef.current?.click();
+
+  const setLanguage = (l: Lang) => {
+    setLang(l);
+    setStoredLang(l);
+    setShowLangOnboarding(false);
+  };
+
+  const stopSpeaking = () => {
+    if (typeof window === "undefined") return;
+    if (!("speechSynthesis" in window)) return;
+    window.speechSynthesis.cancel();
+  };
+
+  const repeatSpeaking = () => {
+    if (!result?.plain_language_summary) return;
+    speak(String(result.plain_language_summary), lang);
+  };
 
   return (
-    <div style={{ maxWidth: 720, margin: "0 auto", padding: 16, fontFamily: "system-ui, sans-serif" }}>
-      {/* Language modal */}
-      {showLangModal && (
-        <div style={{
-          position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)",
-          display: "flex", alignItems: "center", justifyContent: "center", padding: 16, zIndex: 50
-        }}>
-          <div style={{ background: "white", borderRadius: 12, padding: 16, width: "100%", maxWidth: 420 }}>
-            <h2 style={{ marginTop: 0 }}>{t(L, "chooseLangTitle")}</h2>
-            <div style={{ display: "flex", gap: 12 }}>
-              <button
-                style={{ flex: 1, padding: 12, fontSize: 16 }}
-                onClick={() => { saveLang("es"); setShowLangModal(false); }}
-              >
-                {t("es", "spanish")}
-              </button>
-              <button
-                style={{ flex: 1, padding: 12, fontSize: 16 }}
-                onClick={() => { saveLang("en"); setShowLangModal(false); }}
-              >
-                {t("en", "english")}
-              </button>
+    <div style={{ minHeight: "100vh", background: "#f8fafc" }}>
+      <div style={{ maxWidth: 980, margin: "0 auto", padding: "28px 16px" }}>
+        {/* Language onboarding modal */}
+        {showLangOnboarding && (
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              background: "rgba(0,0,0,0.35)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 16,
+              zIndex: 50,
+            }}
+          >
+            <div style={{ width: "100%", maxWidth: 420, background: "white", borderRadius: 16, padding: 16, border: "1px solid #e5e7eb" }}>
+              <div style={{ fontWeight: 900, fontSize: 18 }}>{t("es", "chooseLangTitle")}</div>
+              <div style={{ color: "#6b7280", marginTop: 6 }}>
+                {"Selecciona Español o English para continuar."}
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 10, marginTop: 14 }}>
+                <button
+                  onClick={() => setLanguage("es")}
+                  style={{
+                    border: "1px solid #e5e7eb",
+                    borderRadius: 12,
+                    padding: "12px 14px",
+                    background: "#111827",
+                    color: "white",
+                    fontWeight: 900,
+                    cursor: "pointer",
+                    fontSize: 16,
+                  }}
+                >
+                  {t("es", "spanish")}
+                </button>
+                <button
+                  onClick={() => setLanguage("en")}
+                  style={{
+                    border: "1px solid #e5e7eb",
+                    borderRadius: 12,
+                    padding: "12px 14px",
+                    background: "white",
+                    color: "#111827",
+                    fontWeight: 900,
+                    cursor: "pointer",
+                    fontSize: 16,
+                  }}
+                >
+                  {t("en", "english")}
+                </button>
+              </div>
             </div>
           </div>
+        )}
+
+        {/* Header */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
+          <div>
+            <div style={{ fontSize: 26, fontWeight: 900, letterSpacing: -0.2 }}>DOCU-LEA</div>
+            <div style={{ color: "#6b7280", marginTop: 6 }}>{t(lang, "tagline")}</div>
+          </div>
+
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <div style={{ color: "#6b7280", fontSize: 12, fontWeight: 800 }}>{t(lang, "languageMenu")}</div>
+
+            <button
+              onClick={() => setLanguage("es")}
+              style={{
+                border: "1px solid #e5e7eb",
+                borderRadius: 10,
+                padding: "8px 10px",
+                background: lang === "es" ? "#111827" : "white",
+                color: lang === "es" ? "white" : "#111827",
+                fontWeight: 800,
+                cursor: "pointer",
+              }}
+            >
+              {t(lang, "spanish")}
+            </button>
+
+            <button
+              onClick={() => setLanguage("en")}
+              style={{
+                border: "1px solid #e5e7eb",
+                borderRadius: 10,
+                padding: "8px 10px",
+                background: lang === "en" ? "#111827" : "white",
+                color: lang === "en" ? "white" : "#111827",
+                fontWeight: 800,
+                cursor: "pointer",
+              }}
+            >
+              {t(lang, "english")}
+            </button>
+          </div>
         </div>
-      )}
 
-      {/* Top bar */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-        <h1 style={{ margin: 0 }}>DOCU-LEA</h1>
-        <div>
-          <label style={{ marginRight: 8, fontSize: 14 }}>{t(L, "languageMenu")}:</label>
-          <select
-            value={L}
-            onChange={(e) => saveLang(e.target.value as Lang)}
-            style={{ padding: 8 }}
-          >
-            <option value="es">{t("es", "spanish")}</option>
-            <option value="en">{t("en", "english")}</option>
-          </select>
-        </div>
-      </div>
+        <div style={{ height: 16 }} />
 
-      <p style={{ marginTop: 8, opacity: 0.8 }}>{t(L, "tips")}</p>
+        {/* Photo flow */}
+        <Card title={`${t(lang, "tipsTitle")}`}>
+          <div style={{ color: "#111827", fontWeight: 700, lineHeight: 1.4 }}>
+            <div>{t(lang, "tips1")}</div>
+            <div>{t(lang, "tips2")}</div>
+            <div>{t(lang, "tips3")}</div>
+          </div>
 
-      {/* Upload buttons */}
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 12 }}>
-        <label style={{ display: "inline-block" }}>
+          {/* Hidden inputs */}
           <input
             ref={cameraInputRef}
             type="file"
             accept="image/*"
             capture="environment"
+            onChange={onPickPhoto}
             style={{ display: "none" }}
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) void onFileChosen(f);
-            }}
           />
-          <button style={{ padding: 12, fontSize: 16 }}>{t(L, "takePhoto")}</button>
-        </label>
-
-        <label style={{ display: "inline-block" }}>
           <input
             ref={libraryInputRef}
             type="file"
             accept="image/*"
+            onChange={onPickPhoto}
             style={{ display: "none" }}
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) void onFileChosen(f);
-            }}
           />
-          <button style={{ padding: 12, fontSize: 16 }}>{t(L, "choosePhoto")}</button>
-        </label>
-      </div>
 
-      {/* Preview */}
-      {imageUrl && (
-        <div style={{ marginTop: 16 }}>
-          <img src={imageUrl} alt="preview" style={{ maxWidth: "100%", borderRadius: 8 }} />
-        </div>
-      )}
-
-      {/* Progress */}
-      {(step === "preparing" || step === "ocr" || step === "analyzing") && (
-        <div style={{ marginTop: 16 }}>
-          <div style={{ marginBottom: 8 }}>{statusLabel}</div>
-          <div style={{ height: 10, background: "#eee", borderRadius: 999 }}>
-            <div style={{ height: 10, width: `${progress}%`, background: "#222", borderRadius: 999 }} />
-          </div>
-        </div>
-      )}
-
-      {/* Error */}
-      {step === "error" && (
-        <div style={{ marginTop: 16, padding: 12, border: "1px solid #ddd", borderRadius: 8 }}>
-          <div style={{ whiteSpace: "pre-wrap", marginBottom: 12 }}>{errorMsg}</div>
-          <button style={{ padding: 12, fontSize: 16 }} onClick={() => void retrySameFile()}>
-            {t(L, "tryAgain")}
-          </button>
-        </div>
-      )}
-
-      {/* OCR preview toggle */}
-      {ocrText && (
-        <div style={{ marginTop: 16 }}>
-          <button
-            style={{ padding: 8, fontSize: 14 }}
-            onClick={() => setShowOcrPreview((v) => !v)}
-          >
-            {showOcrPreview ? t(L, "hidePreview") : t(L, "previewText")}
-          </button>
-
-          {showOcrPreview && (
-            <pre style={{ whiteSpace: "pre-wrap", background: "#f6f6f6", padding: 12, borderRadius: 8 }}>
-              {ocrText}
-            </pre>
-          )}
-        </div>
-      )}
-
-      {/* Result */}
-      {step === "done" && result && (
-        <div style={{ marginTop: 20 }}>
-          <h2>{t(L, "resultTitle")}</h2>
-
-          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
-            <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <input
-                type="checkbox"
-                checked={readAloudEnabled}
-                onChange={(e) => setReadAloudEnabled(e.target.checked)}
-              />
-              {t(L, "readAloud")}
-            </label>
-
-            <button style={{ padding: 8 }} onClick={() => stopSpeak()}>
-              {t(L, "stop")}
-            </button>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
             <button
-              style={{ padding: 8 }}
-              onClick={() => {
-                if (lastSummaryRef.current) speak(lastSummaryRef.current, L);
+              onClick={pickCamera}
+              disabled={loading}
+              style={{
+                border: "1px solid #e5e7eb",
+                borderRadius: 12,
+                padding: "12px 14px",
+                background: loading ? "#e5e7eb" : "#111827",
+                color: loading ? "#6b7280" : "white",
+                fontWeight: 900,
+                cursor: loading ? "not-allowed" : "pointer",
+                minWidth: 170,
               }}
             >
-              {t(L, "repeat")}
+              {t(lang, "takePhoto")}
+            </button>
+
+            <button
+              onClick={pickLibrary}
+              disabled={loading}
+              style={{
+                border: "1px solid #e5e7eb",
+                borderRadius: 12,
+                padding: "12px 14px",
+                background: "white",
+                color: "#111827",
+                fontWeight: 900,
+                cursor: loading ? "not-allowed" : "pointer",
+                minWidth: 210,
+                opacity: loading ? 0.6 : 1,
+              }}
+            >
+              {t(lang, "choosePhoto")}
             </button>
           </div>
 
-          <section style={{ marginBottom: 16 }}>
-            <h3>{t(L, "summary")}</h3>
-            <p>
-              {result?.plain_summary ||
-                result?.plain_language_summary ||
-                result?.summary ||
-                ""}
-            </p>
-          </section>
+          {photoPreviewUrl && (
+            <div style={{ marginTop: 12 }}>
+              <img
+                src={photoPreviewUrl}
+                style={{ maxWidth: "100%", borderRadius: 12, border: "1px solid #e5e7eb" }}
+                alt="preview"
+              />
+            </div>
+          )}
 
-          <section style={{ marginBottom: 16 }}>
-            <h3>{t(L, "whatItMeans")}</h3>
-            <p>{result?.what_it_means || result?.meaning || ""}</p>
-          </section>
+          <ProgressBar step={step} lang={lang} />
 
-          <section style={{ marginBottom: 16 }}>
-            <h3>{t(L, "nextSteps")}</h3>
-            <ol>
-              {(result?.next_steps || result?.step_by_step_actions || []).map((s: any, i: number) => (
-                <li key={i}>{typeof s === "string" ? s : s?.text || JSON.stringify(s)}</li>
-              ))}
-            </ol>
-          </section>
+          {/* Speech controls */}
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10, alignItems: "center" }}>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 800, color: "#111827" }}>
+              <input
+                type="checkbox"
+                checked={speakOn}
+                onChange={(e) => setSpeakOn(e.target.checked)}
+                disabled={loading}
+              />
+              {t(lang, "readAloud")}
+            </label>
 
-          <section style={{ marginBottom: 16 }}>
-            <h3>{t(L, "scripts")}</h3>
-            <pre style={{ whiteSpace: "pre-wrap", background: "#f6f6f6", padding: 12, borderRadius: 8 }}>
-              {result?.scripts ? JSON.stringify(result.scripts, null, 2) : ""}
-            </pre>
-          </section>
+            <button
+              onClick={stopSpeaking}
+              disabled={loading}
+              style={{
+                border: "1px solid #e5e7eb",
+                borderRadius: 10,
+                padding: "8px 10px",
+                background: "white",
+                color: "#111827",
+                fontWeight: 800,
+                cursor: loading ? "not-allowed" : "pointer",
+                opacity: loading ? 0.6 : 1,
+              }}
+            >
+              {t(lang, "stop")}
+            </button>
 
-          <section style={{ marginBottom: 16 }}>
-            <h3>{t(L, "safetyNotes")}</h3>
-            <ul>
-              {(result?.safety_notes || result?.safety || []).map((s: any, i: number) => (
-                <li key={i}>{typeof s === "string" ? s : s?.text || JSON.stringify(s)}</li>
-              ))}
-            </ul>
-          </section>
-        </div>
-      )}
+            <button
+              onClick={repeatSpeaking}
+              disabled={!result?.plain_language_summary}
+              style={{
+                border: "1px solid #e5e7eb",
+                borderRadius: 10,
+                padding: "8px 10px",
+                background: !result?.plain_language_summary ? "#e5e7eb" : "white",
+                color: !result?.plain_language_summary ? "#6b7280" : "#111827",
+                fontWeight: 800,
+                cursor: !result?.plain_language_summary ? "not-allowed" : "pointer",
+              }}
+            >
+              {t(lang, "repeat")}
+            </button>
+          </div>
+
+          {/* Extracted text preview */}
+          {extractedText && (
+            <div style={{ marginTop: 10 }}>
+              <button
+                onClick={() => setShowExtracted((v) => !v)}
+                style={{
+                  border: "1px solid #e5e7eb",
+                  borderRadius: 10,
+                  padding: "8px 10px",
+                  background: "white",
+                  color: "#111827",
+                  fontWeight: 800,
+                  cursor: "pointer",
+                }}
+              >
+                {showExtracted ? t(lang, "hidePreview") : t(lang, "preview")}
+              </button>
+
+              {showExtracted && (
+                <pre
+                  style={{
+                    marginTop: 8,
+                    background: "#f3f4f6",
+                    border: "1px solid #e5e7eb",
+                    padding: 12,
+                    borderRadius: 12,
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                    fontSize: 13,
+                    lineHeight: 1.35,
+                  }}
+                >
+                  {extractedText}
+                </pre>
+              )}
+            </div>
+          )}
+
+          {error && (
+            <div
+              style={{
+                marginTop: 12,
+                background: "#fef2f2",
+                border: "1px solid #fecaca",
+                color: "#991b1b",
+                padding: 12,
+                borderRadius: 12,
+                whiteSpace: "pre-wrap",
+              }}
+            >
+              <strong>Error:</strong> {error}
+              <div style={{ marginTop: 10 }}>
+                <button
+                  onClick={() => {
+                    setError(null);
+                    setStep("idle");
+                    setResult(null);
+                    setExtractedText(null);
+                  }}
+                  style={{
+                    border: "1px solid #e5e7eb",
+                    borderRadius: 12,
+                    padding: "10px 14px",
+                    background: "#111827",
+                    color: "white",
+                    fontWeight: 900,
+                    cursor: "pointer",
+                  }}
+                >
+                  {t(lang, "tryAgain")}
+                </button>
+              </div>
+            </div>
+          )}
+        </Card>
+
+        <div style={{ height: 12 }} />
+
+        {/* Paste text flow (kept for dev/testing; translated) */}
+        <Card title={t(lang, "pasteTitle")}>
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            rows={7}
+            style={{
+              width: "100%",
+              borderRadius: 12,
+              border: "1px solid #e5e7eb",
+              padding: 12,
+              fontSize: 14,
+              lineHeight: 1.35,
+              resize: "vertical",
+              outline: "none",
+            }}
+            placeholder={t(lang, "pastePlaceholder")}
+          />
+
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 10, gap: 12 }}>
+            <div style={{ color: "#6b7280", fontSize: 12 }}>{t(lang, "minChars")}</div>
+
+            <button
+              onClick={runFromText}
+              disabled={!canAnalyze || loading}
+              style={{
+                border: "1px solid #e5e7eb",
+                borderRadius: 12,
+                padding: "10px 14px",
+                background: !canAnalyze || loading ? "#e5e7eb" : "#111827",
+                color: !canAnalyze || loading ? "#6b7280" : "white",
+                fontWeight: 900,
+                cursor: !canAnalyze || loading ? "not-allowed" : "pointer",
+                minWidth: 140,
+              }}
+            >
+              {loading ? t(lang, "analyzing") : t(lang, "analyzeText")}
+            </button>
+          </div>
+        </Card>
+
+        {/* Results */}
+        {result && (
+          <div style={{ marginTop: 16, display: "grid", gridTemplateColumns: "1fr", gap: 12 }}>
+            <Card>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+                <StatusBadge status={result.legitimacy_assessment?.status} lang={lang} />
+
+                <div style={{ color: "#6b7280", fontSize: 13 }}>
+                  <div>
+                    <strong>{t(lang, "type")}:</strong> {result.document_type?.category} ({result.document_type?.confidence})
+                  </div>
+                  <div style={{ marginTop: 4 }}>
+                    <strong>{t(lang, "confidence")}:</strong> {result.legitimacy_assessment?.confidence}
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ marginTop: 12, color: "#111827" }}>
+                <div style={{ fontWeight: 900, fontSize: 16 }}>{t(lang, "summary")}</div>
+                <div style={{ marginTop: 6 }}>{result.plain_language_summary}</div>
+              </div>
+
+              <div style={{ marginTop: 12, color: "#111827" }}>
+                <div style={{ fontWeight: 900, fontSize: 16 }}>{t(lang, "whatItMeans")}</div>
+                <div style={{ marginTop: 6 }}>{result.what_this_means_for_you}</div>
+              </div>
+
+              <div style={{ marginTop: 12, color: "#6b7280", fontSize: 13 }}>{result.legitimacy_assessment?.summary_reason}</div>
+            </Card>
+
+            <Card title={t(lang, "nextSteps")}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 10 }}>
+                {Array.isArray(result.step_by_step_actions) &&
+                  result.step_by_step_actions.map((s: any) => <StepCard key={s.step} step={s} lang={lang} />)}
+              </div>
+            </Card>
+
+            {Array.isArray(result.red_flags) && result.red_flags.length > 0 && (
+              <Card title={t(lang, "redFlags")}>
+                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                  {result.red_flags.map((rf: string, idx: number) => (
+                    <li key={idx} style={{ marginBottom: 6 }}>
+                      {rf}
+                    </li>
+                  ))}
+                </ul>
+              </Card>
+            )}
+
+            {(result.suggested_scripts?.call_script || result.suggested_scripts?.email_template) && (
+              <Card title={t(lang, "scripts")}>
+                {result.suggested_scripts?.call_script && (
+                  <CopyBlock label={t(lang, "callScript")} text={result.suggested_scripts.call_script} lang={lang} />
+                )}
+                {result.suggested_scripts?.email_template && (
+                  <CopyBlock label={t(lang, "emailTemplate")} text={result.suggested_scripts.email_template} lang={lang} />
+                )}
+              </Card>
+            )}
+
+            {result.safety_notes && <Card title={t(lang, "safetyNotes")}>{result.safety_notes}</Card>}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
