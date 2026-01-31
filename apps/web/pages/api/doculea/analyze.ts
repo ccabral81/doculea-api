@@ -6,130 +6,6 @@ import { DoculeaResponseSchema, DoculeaResponse } from "../../../../../packages/
 import { applyHardSafetyOverride } from "../../../../../packages/core/src/safety/doculeaSafety";
 import { mapOutputToBucket } from "../../../../../packages/core/src/mapping/bucketMap";
 
-type UiActionType = "action_required" | "informational" | "offer";
-
-function looksLikeOffer(text: string): boolean {
-  const t = (text || "").toLowerCase();
-
-  const offerWords = [
-    "offer", "promotion", "limited time", "act now", "enroll", "enrollment", "sign up", "signup",
-    "call", "visit", "optional", "program", "protection program",
-    "oferta", "promoción", "promocion", "inscrib", "inscripción", "inscripcion",
-    "llama", "visita", "programa", "protección", "proteccion"
-  ];
-
-  const hitCount = offerWords.reduce((acc, w) => (t.includes(w) ? acc + 1 : acc), 0);
-
-  const hasMonthlyPrice =
-    /\$\s?\d+(?:\.\d{2})?\s*(?:a\s*month|per\s*month)/i.test(text) ||
-    /\$\s?\d+(?:\.\d{2})?\s*(?:al\s*mes|por\s*mes)/i.test(text) ||
-    /\b\d+(?:\.\d{2})?\s*(?:\/month|\/mes)\b/i.test(text);
-
-  const hasCTA =
-    /\b(call|llama)\b[\s\S]{0,80}\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b/i.test(text) ||
-    /\b(visit|visita)\b[\s\S]{0,80}\b[a-z0-9.-]+\.[a-z]{2,}\b/i.test(text) ||
-    /\b(enroll|inscrib|sign up|inscripción|inscripcion)\b/i.test(text);
-
-  return hitCount >= 2 || hasMonthlyPrice || hasCTA;
-}
-
-function deriveUiActionType(result: any, rawText: string): UiActionType {
-  const category = result?.document_type?.category;
-  const status = result?.legitimacy_assessment?.status;
-
-  // suspicious -> treat as informational (avoid actions that contact unknown parties)
-  if (status === "suspicious") return "informational";
-
-  const combined =
-    String(rawText || "") +
-    "\n\n" +
-    String(result?.plain_language_summary || "") +
-    "\n\n" +
-    String(result?.what_this_means_for_you || "");
-
-  // ✅ Catch offers even when model labels as informational
-  if (looksLikeOffer(combined)) return "offer";
-
-  // usually actionable categories
-  if (["utility", "medical", "insurance", "debt_collection", "government", "employment", "school"].includes(category)) {
-    return "action_required";
-  }
-
-  return "informational";
-}
-
-function stripScripts(result: any) {
-  return {
-    ...result,
-    suggested_scripts: { call_script: "", email_template: "" },
-  };
-}
-
-function sanitizeOfferOutput(result: any, language: "en" | "es") {
-  const safeSteps =
-    language === "es"
-      ? [
-          {
-            step: 1,
-            title: "Identificar que es una oferta",
-            description:
-              "Este documento parece ser una oferta o promoción. No es obligatorio inscribirse ni comprar nada.",
-            urgency: "low",
-          },
-          {
-            step: 2,
-            title: "Ignorar si no te interesa",
-            description:
-              "Si no lo solicitaste o no lo necesitas, puedes ignorarlo. Evita llamar números o visitar enlaces impresos en la carta.",
-            urgency: "low",
-          },
-          {
-            step: 3,
-            title: "Verificar por canales oficiales (opcional)",
-            description:
-              "Si realmente te interesa, busca la empresa por tu cuenta y compara alternativas antes de decidir.",
-            urgency: "low",
-          },
-        ]
-      : [
-          {
-            step: 1,
-            title: "Recognize this is an offer",
-            description:
-              "This document appears to be a marketing offer or promotion. You are not required to sign up or purchase anything.",
-            urgency: "low",
-          },
-          {
-            step: 2,
-            title: "Ignore if you’re not interested",
-            description:
-              "If you didn’t request it or don’t need it, you can ignore it. Avoid calling numbers or clicking links printed on the letter.",
-            urgency: "low",
-          },
-          {
-            step: 3,
-            title: "Verify via official sources (optional)",
-            description:
-              "If you truly want it, look up the company independently and compare alternatives before deciding.",
-            urgency: "low",
-          },
-        ];
-
-  const extraSafety =
-    language === "es"
-      ? "Nota: Para ofertas, evita llamar números o visitar enlaces impresos en la carta. Si decides investigar, busca la empresa por tu cuenta."
-      : "Note: For offers, avoid calling numbers or clicking links printed on the letter. If you investigate, look up the company independently.";
-
-  return {
-    ...result,
-    step_by_step_actions: safeSteps,
-    recommended_actions: [],
-    suggested_scripts: { call_script: "", email_template: "" },
-    safety_notes: result?.safety_notes ? `${result.safety_notes}\n\n${extraSafety}` : extraSafety,
-  };
-}
-
-
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const DEBUG = process.env.NODE_ENV !== "production";
@@ -207,7 +83,102 @@ function pickDocumentText(body: any): string | undefined {
   );
 }
 
+
+function looksLikeOffer(text: string) {
+  const t = (text || "").toLowerCase();
+
+  const offerWords = [
+    "offer","promotion","limited time","act now","enroll","enrollment","sign up","signup",
+    "call","visit","optional","program","protection program",
+    "oferta","promoción","promocion","inscrib","inscripción","inscripcion","llama","visita","programa","protección","proteccion"
+  ];
+
+  const hits = offerWords.filter(w => t.includes(w)).length;
+
+  const hasMonthlyPrice =
+    /\$\s?\d+(?:\.\d{2})?\s*(?:a\s*month|per\s*month)/i.test(text) ||
+    /\$\s?\d+(?:\.\d{2})?\s*(?:al\s*mes|por\s*mes)/i.test(text) ||
+    /\b\d+(?:\.\d{2})?\s*(?:\/month|\/mes)\b/i.test(text);
+
+  const hasCTA =
+    /\b(call|llama)\b.*\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b/i.test(text) ||
+    /\b(visit|visita)\b.*\b[a-z0-9.-]+\.[a-z]{2,}\b/i.test(text) ||
+    /\b(enroll|inscrib|sign up|inscripción|inscripcion)\b/i.test(text);
+
+  return hits >= 2 || hasMonthlyPrice || hasCTA;
+}
+
 // ---------- handler ----------
+
+function deriveUiActionType(result: any, rawText: string): "action_required" | "informational" | "offer" {
+  const category = result?.document_type?.category;
+  const status = result?.legitimacy_assessment?.status;
+
+  // If suspicious, avoid "action-required" flows; treat as informational/safety-first.
+  if (status === "suspicious") return "informational";
+
+  // Offer detection should NOT rely on the model's category. Use deterministic patterns.
+  const combined = String(rawText || "") +
+    "\n\n" +
+    String(result?.plain_language_summary || "") +
+    "n\n" +
+    String(result?.what_this_means_for_you || "");
+
+  if (looksLikeOffer(combined)) return "offer";
+
+  // Action-required categories
+  if (["utility", "medical", "insurance", "debt_collection", "government", "employment", "school", "legal"].includes(category)) {
+    return "action_required";
+  }
+
+  return "informational";
+}
+
+function sanitizeOfferOutput(result: any, language: "en" | "es") {
+  const safeSteps =
+    language === "es"
+      ? [
+          { step: 1, title: "Identificar que es una oferta", description: "Este documento parece ser una oferta o promoción. No es obligatorio inscribirse ni comprar nada.", urgency: "low" },
+          { step: 2, title: "Ignorar si no te interesa", description: "Si no lo solicitaste o no lo necesitas, puedes ignorarlo. Evita llamar números o visitar enlaces impresos en el documento.", urgency: "low" },
+          { step: 3, title: "Verificar por canales oficiales (opcional)", description: "Si te interesa, busca la empresa por tu cuenta (sitio oficial desde un buscador, reseñas confiables) y compara alternativas antes de decidir.", urgency: "low" },
+        ]
+      : [
+          { step: 1, title: "Recognize this is an offer", description: "This document appears to be a marketing offer or promotion. You are not required to sign up or purchase anything.", urgency: "low" },
+          { step: 2, title: "Ignore if you’re not interested", description: "If you didn’t request it or don’t need it, you can ignore it. Avoid calling numbers or clicking links printed on the letter.", urgency: "low" },
+          { step: 3, title: "Verify via official sources (optional)", description: "If you want it, look up the company independently (official website via search, reputable reviews) and compare alternatives before deciding.", urgency: "low" },
+        ];
+
+  result.step_by_step_actions = safeSteps;
+
+  // Remove scripts to avoid driving signups/purchases
+  result.suggested_scripts = { call_script: "", email_template: "" };
+  result.recommended_actions = [];
+
+  const extraSafety =
+    language === "es"
+      ? "Nota: Para ofertas, evita llamar números o visitar enlaces impresos en la carta. Si investigas, busca la empresa por tu cuenta."
+      : "Note: For offers, avoid calling numbers or clicking links printed on the letter. If you investigate, look up the company independently.";
+
+  result.safety_notes = result.safety_notes ? `${result.safety_notes}\n\n${extraSafety}` : extraSafety;
+
+  if (!Array.isArray(result.red_flags)) result.red_flags = [];
+  const offerFlag =
+    language === "es"
+      ? "Es una oferta/promoción: no es obligatorio inscribirse."
+      : "This is an offer/promotion: you are not required to sign up.";
+  if (!result.red_flags.includes(offerFlag)) result.red_flags.unshift(offerFlag);
+
+  return result;
+}
+
+function toConfidenceEnum(v: any): "high" | "medium" | "low" {
+  if (v === "high" || v === "medium" || v === "low") return v;
+  const n = typeof v === "number" ? v : Number(v);
+  if (!Number.isFinite(n)) return "medium";
+  if (n >= 0.8) return "high";
+  if (n >= 0.5) return "medium";
+  return "low";
+}
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
@@ -261,9 +232,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const raw = completion.choices?.[0]?.message?.content || "";
     if (!raw) return res.status(500).json({ error: "Empty AI response." });
 
-    let json: unknown;
+    let json: any;
     try {
       json = JSON.parse(raw);
+
+    // Normalize confidence fields to schema enums (pre-parse)
+    try {
+      if (json?.document_type) json.document_type.confidence = toConfidenceEnum(json.document_type.confidence);
+      if (json?.legitimacy_assessment) json.legitimacy_assessment.confidence = toConfidenceEnum(json.legitimacy_assessment.confidence);
+    } catch {
+      // ignore
+    }
     } catch {
       return res.status(500).json({ error: "AI returned invalid JSON." });
     }
@@ -286,24 +265,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // Apply hard safety overrides (use original text for scam signals)
     result = applyHardSafetyOverride(result, trimmedText, language);
-    // Determine UI intent type (offer vs action-required vs informational) based on BOTH model output and raw text
+
     const ui_action_type = deriveUiActionType(result, trimmedText);
     (result as any).ui_action_type = ui_action_type;
 
-    // Offer guardrail: never encourage sign-up/call/visit
     if (ui_action_type === "offer") {
       result = sanitizeOfferOutput(result, language);
     }
 
-    // Additional safety: hide scripts for suspicious/unclear (and offers already handled)
-    const st = result.legitimacy_assessment?.status;
-    if (st === "suspicious" || st === "unclear" || ui_action_type === "offer") {
-      result = stripScripts(result);
+    // Extra safety: avoid scripts for suspicious/unclear (can accidentally push users into risky contact).
+    const st = result?.legitimacy_assessment?.status;
+    if (st === "suspicious" || st === "unclear") {
+      (result as any).suggested_scripts = { call_script: "", email_template: "" };
     }
 
     const { bucket, category } = mapOutputToBucket(result);
 
-    return res.status(200).json({ ...result, ui_action_type: (result as any).ui_action_type, bucket, category });
+    return res.status(200).json({ ...result, ui_action_type, bucket, category });
   } catch (err: any) {
     if (err?.message === "OpenAI request timed out") {
       return res.status(504).json({ error: "The analysis took too long. Please try again." });
@@ -311,6 +289,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(500).json({ error: err?.message || "Server error" });
   }
 }
+
+
+
 
 
 
