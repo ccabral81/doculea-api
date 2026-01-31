@@ -337,6 +337,8 @@ function CopyBlock({ label, text, lang }: { label: string; text: string; lang: L
     }
   };
 
+
+
   return (
     <div style={{ marginTop: 10 }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
@@ -451,6 +453,9 @@ export default function DoculeaTestPage() {
   const loading = step === "preparing" || step === "ocr" || step === "analyzing";
 
   async function runFromText() {
+    const armed = ensureVoiceArmed(lang);
+if (armed && !speakOn) setSpeakOn(true);
+
     setError(null);
     setResult(null);
     setExtractedText(null);
@@ -485,6 +490,26 @@ export default function DoculeaTestPage() {
     }
   }
 
+    function ensureVoiceArmed(lang: Lang) {
+  if (typeof window === "undefined") return false;
+  if (!("speechSynthesis" in window)) return false;
+
+        try {
+          // iOS needs a user gesture: call this INSIDE onPickPhoto() and onAnalyzeClick()
+          window.speechSynthesis.cancel();
+
+          const u = new SpeechSynthesisUtterance(lang === "es" ? "Listo." : "Ready.");
+          u.lang = lang === "es" ? "es-MX" : "en-US";
+          u.volume = 0; // "silent arm" (still counts as a speak call)
+          u.rate = 1.0;
+
+          window.speechSynthesis.speak(u);
+          return true;
+        } catch {
+          return false;
+        }
+      }
+
   async function onPickPhoto(e: React.ChangeEvent<HTMLInputElement>) {
     if (typeof window === "undefined") return;
 
@@ -499,6 +524,10 @@ export default function DoculeaTestPage() {
     let finalFile = f;
     try {
       finalFile = await normalizeToJpegIfHeic(f);
+      // user gesture happened: arm voice and optionally turn it on
+    const armed = ensureVoiceArmed(lang);
+    if (armed && !speakOn) setSpeakOn(true);
+
     } catch {
       setStep("error");
       setError(
