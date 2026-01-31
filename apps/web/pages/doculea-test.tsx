@@ -516,6 +516,8 @@ if (armed && !speakOn) setSpeakOn(true);
     const f = e.target.files?.[0] || null;
     e.currentTarget.value = "";
     if (!f) return;
+     const armed = ensureVoiceArmed(lang);
+    if (armed && !speakOn) setSpeakOn(true);
 
     setError(null);
     setResult(null);
@@ -525,9 +527,7 @@ if (armed && !speakOn) setSpeakOn(true);
     try {
       finalFile = await normalizeToJpegIfHeic(f);
       // user gesture happened: arm voice and optionally turn it on
-    const armed = ensureVoiceArmed(lang);
-    if (armed && !speakOn) setSpeakOn(true);
-
+   
     } catch {
       setStep("error");
       setError(
