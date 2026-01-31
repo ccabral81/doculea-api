@@ -1,9 +1,71 @@
 "use client";
 import React, { useMemo, useRef, useState } from "react";
-import { ocrInBrowser, isOcrTextUsable, cleanOcrText } from "@/ocr/browserOcr";
+import { ocrInBrowser, isOcrTextUsable } from "@/ocr/browserOcr";
 
 type Lang = "en" | "es";
-type Step = "idle" | "preparing" | "ocr" | "analyzing" | "done" | "error";
+function speak(text: string, lang: Lang) {
+  if (typeof window === "undefined") return;
+  if (!("speechSynthesis" in window)) return;
+
+  try {
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    // Spanish Latin America / US-friendly
+    u.lang = lang === "es" ? "es-US" : "en-US";
+    u.rate = 1.0;
+    u.pitch = 1.0;
+    window.speechSynthesis.speak(u);
+  } catch {
+    // ignore
+  }
+}
+
+function buildVoiceIntro(result: any, lang: Lang) {
+  const actionType = result?.ui_action_type;
+  const status = result?.legitimacy_assessment?.status;
+
+  if (actionType === "offer") {
+    return lang === "es"
+      ? "ℹ️ Esto parece una oferta o promoción. No necesitas inscribirte. Estas cartas a veces usan urgencia para presionarte."
+      : "ℹ️ This appears to be an offer or promotion. You do not need to sign up. These letters often use urgency to pressure you.";
+  }
+
+  if (status === "suspicious") {
+    return lang === "es"
+      ? "🚫 Este documento parece sospechoso. No llames ni hagas clic en enlaces hasta verificarlo."
+      : "🚫 This document looks suspicious. Do not call or click links until you verify it.";
+  }
+
+  if (status === "unclear") {
+    return lang === "es"
+      ? "⚠️ No está claro si este documento es legítimo. Trátalo con precaución."
+      : "⚠️ It’s unclear if this document is legitimate. Treat it with caution.";
+  }
+
+  return lang === "es" ? "✅ Este documento parece legítimo." : "✅ This document looks likely legitimate.";
+}
+
+function speakRedFlags(result: any, lang: Lang) {
+  const status = result?.legitimacy_assessment?.status;
+  if (status !== "suspicious" && status !== "unclear") return;
+  if (!Array.isArray(result?.red_flags) || result.red_flags.length === 0) return;
+
+  const intro = lang === "es" ? "Señales de alerta importantes:" : "Important red flags:";
+  const items = result.red_flags.slice(0, 4);
+
+  const numbersEs = ["Uno", "Dos", "Tres", "Cuatro"];
+  const numbersEn = ["One", "Two", "Three", "Four"];
+
+  const spoken = items
+    .map((rf: string, idx: number) => {
+      const n = lang === "es" ? (numbersEs[idx] || String(idx + 1)) : (numbersEn[idx] || String(idx + 1));
+      return `${n}: ${rf}`;
+    })
+    .join(". ");
+
+  speak(`${intro} ${spoken}`, lang);
+}
+
 
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, { bg: string; label: string; dot: string }> = {
@@ -162,76 +224,16 @@ function Card({ title, children }: { title?: string; children: React.ReactNode }
   );
 }
 
-function speak(text: string, lang: Lang) {
-  if (typeof window === "undefined") return;
-  if (!("speechSynthesis" in window)) return;
-
-  try {
-    window.speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    u.lang = lang === "es" ? "es-MX" : "en-US";
-    u.rate = 1.0;
-    u.pitch = 1.0;
-    window.speechSynthesis.speak(u);
-  } catch {
-    // ignore
-  }
-}
-
-
-function buildVoiceIntro(result: any, lang: Lang) {
-  const status = result?.legitimacy_assessment?.status;
-  const actionType = result?.ui_action_type;
-
-  if (actionType === "offer") {
-    return lang === "es"
-      ? "ℹ️ Esto parece una oferta o promoción. No necesitas inscribirte. Estas cartas a veces usan urgencia para presionarte."
-      : "ℹ️ This appears to be an offer or promotion. You do not need to sign up. These letters often use urgency to pressure you.";
-  }
-
-  if (status === "suspicious") {
-    return lang === "es"
-      ? "🚫 Este documento parece sospechoso. No llames ni hagas clic en enlaces hasta verificarlo."
-      : "🚫 This document looks suspicious. Do not call or click links until you verify it.";
-  }
-
-  if (status === "unclear") {
-    return lang === "es"
-      ? "⚠️ No está claro si este documento es legítimo. Trátalo con precaución."
-      : "⚠️ It’s unclear if this document is legitimate. Treat it with caution.";
-  }
-
-  return lang === "es" ? "✅ Este documento parece legítimo." : "✅ This document looks likely legitimate.";
-}
-
-function speakRedFlags(result: any, lang: Lang) {
-  const status = result?.legitimacy_assessment?.status;
-  if (status !== "suspicious" && status !== "unclear") return;
-
-  const flags = Array.isArray(result?.red_flags) ? result.red_flags : [];
-  if (!flags.length) return;
-
-  const intro = lang === "es" ? "Señales de alerta importantes." : "Important red flags.";
-  const labelsEs = ["Uno", "Dos", "Tres", "Cuatro"];
-  const labelsEn = ["One", "Two", "Three", "Four"];
-
-  const items = flags.slice(0, 4).map((rf: string, idx: number) => {
-    const n = lang === "es" ? (labelsEs[idx] || String(idx + 1)) : (labelsEn[idx] || String(idx + 1));
-    return `${n}: ${rf}`;
-  });
-
-  speak(`${intro} ${items.join(". ")}`, lang);
-}
-
 export default function DoculeaTestPage() {
   const [lang, setLang] = useState<Lang>("en");
   const [text, setText] = useState(
     "FINAL NOTICE: Pay $500 in gift cards or you will be arrested."
   );
   const [loading, setLoading] = useState(false);
+  const [speakOn, setSpeakOn] = useState(true);
+
   const [result, setResult] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
-  const [ocrWarning, setOcrWarning] = useState<string | null>(null);
   const [status, setStatus]=useState<string>("");
 
   const canAnalyze = useMemo(() => text.trim().length >= 20, [text]);
@@ -239,7 +241,6 @@ export default function DoculeaTestPage() {
   async function run() {
     setLoading(true);
     setError(null);
-    setOcrWarning(null);
     setResult(null);
 
     try {
@@ -267,6 +268,20 @@ export default function DoculeaTestPage() {
       }
 
       setResult(json);
+
+    // 🔊 Voice: always speak status framing + summary; for suspicious/unclear also speak red flags
+    if (speakOn && json?.plain_language_summary) {
+      const intro = buildVoiceIntro(json, lang);
+      speak(`${intro} ${String(json.plain_language_summary)}`, lang);
+      speakRedFlags(json, lang);
+    }
+
+      // 🔊 Voice: always speak status framing + summary; for suspicious/unclear also speak red flags
+      if (speakOn && json?.plain_language_summary) {
+        const intro = buildVoiceIntro(json, lang);
+        speak(`${intro} ${String(json.plain_language_summary)}`, lang);
+        speakRedFlags(json, lang);
+      }
     } catch (e: any) {
       setError(e?.message || "Unknown error");
     } finally {
@@ -277,8 +292,6 @@ export default function DoculeaTestPage() {
 
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
-
-  const lastAnnouncedStep = useRef<Step | null>(null);
   const [ocrDebug, setOcrDebug] = useState<any>(null);
 
 async function onPickPhoto(e: React.ChangeEvent<HTMLInputElement>) {
@@ -336,7 +349,7 @@ async function onPickPhoto(e: React.ChangeEvent<HTMLInputElement>) {
     setLoading(false);
     setStatus("");
     throw new Error(
-      `OCR was too weak (chars=${q.charCount}, words=${q.wordCount}, phrases=${q.phraseCount}, lines=${q.lineCount}). Retake photo: closer, brighter, avoid glare.`
+      `OCR was too weak (chars=${q.charCount}, words=${q.wordCount}). Retake photo: closer, brighter, avoid glare.`
     );
   }
 
@@ -480,7 +493,14 @@ async function onPickPhoto(e: React.ChangeEvent<HTMLInputElement>) {
               Min 20 chars. Max is enforced server-side.
             </div>
 
-            <button
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10 }}>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 800, color: "#111827" }}>
+              <input type="checkbox" checked={speakOn} onChange={(e) => setSpeakOn(e.target.checked)} disabled={loading} />
+              Read aloud
+            </label>
+          </div>
+
+          <button
               onClick={run}
               disabled={!canAnalyze || loading}
               style={{
@@ -554,6 +574,13 @@ async function onPickPhoto(e: React.ChangeEvent<HTMLInputElement>) {
               </div>
             </Card>
 
+            {/* Hide scripts for offers/suspicious/unclear */}
+            {(() => {
+              const st = result?.legitimacy_assessment?.status;
+              const hideScripts = result?.ui_action_type === "offer" || st === "suspicious" || st === "unclear";
+              return null;
+            })()}
+
             {Array.isArray(result.red_flags) && result.red_flags.length > 0 && (
               <Card title="Red flags">
                 <ul style={{ margin: 0, paddingLeft: 18 }}>
@@ -566,7 +593,12 @@ async function onPickPhoto(e: React.ChangeEvent<HTMLInputElement>) {
               </Card>
             )}
 
-            {result?.ui_action_type !== "offer" && (result.suggested_scripts?.call_script || result.suggested_scripts?.email_template) && (
+            {(() => {
+              const st = result?.legitimacy_assessment?.status;
+              const hideScripts = result?.ui_action_type === "offer" || st === "suspicious" || st === "unclear";
+              if (hideScripts) return null;
+              return (
+                (result.suggested_scripts?.call_script || result.suggested_scripts?.email_template) && (
               <Card title="Scripts">
                 {result.suggested_scripts?.call_script && (
                   <CopyBlock label="Call script" text={result.suggested_scripts.call_script} />
@@ -575,7 +607,9 @@ async function onPickPhoto(e: React.ChangeEvent<HTMLInputElement>) {
                   <CopyBlock label="Email template" text={result.suggested_scripts.email_template} />
                 )}
               </Card>
-            )}
+                )
+              );
+            })()}
 
             {result.safety_notes && <Card title="Safety notes">{result.safety_notes}</Card>}
           </div>
@@ -584,5 +618,3 @@ async function onPickPhoto(e: React.ChangeEvent<HTMLInputElement>) {
     </div>
   );
 }
-
-
