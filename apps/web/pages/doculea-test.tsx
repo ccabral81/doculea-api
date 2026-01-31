@@ -500,7 +500,7 @@ if (armed && !speakOn) setSpeakOn(true);
 
           const u = new SpeechSynthesisUtterance(lang === "es" ? "Listo." : "Ready.");
           u.lang = lang === "es" ? "es-MX" : "en-US";
-          u.volume = 0; // "silent arm" (still counts as a speak call)
+          u.volume = 0.1; // "silent arm" (still counts as a speak call)
           u.rate = 1.0;
 
           window.speechSynthesis.speak(u);
