@@ -1,168 +1,15 @@
 "use client";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import { ocrInBrowser, isOcrTextUsable, cleanOcrText } from "@/ocr/browserOcr";
 
 type Lang = "en" | "es";
 type Step = "idle" | "preparing" | "ocr" | "analyzing" | "done" | "error";
 
-const STORAGE_LANG_KEY = "doculea_lang";
-const STORAGE_SPEAK_KEY = "doculea_speak";
-
-const COPY: Record<Lang, Record<string, string>> = {
-  es: {
-    tagline: "Entiende el documento. Verifica si es legítimo. Sigue pasos claros.",
-    chooseLangTitle: "Elige tu idioma",
-    spanish: "Español",
-    english: "English",
-    languageMenu: "Idioma",
-    tipsTitle: "Consejos para una buena foto",
-    tips1: "1) Acércate al documento",
-    tips2: "2) Buena luz (sin reflejos)",
-    tips3: "3) Llena el encuadre",
-    takePhoto: "Tomar foto",
-    choosePhoto: "Elegir de la galería",
-    retake: "Tomar otra",
-    preparingPhoto: "Preparando la foto…",
-    readingText: "Leyendo el texto…",
-    understandingDoc: "Entendiendo el documento…",
-    analyzing: "Analizando…",
-    weakOcrTitle: "No pudimos leer esto con claridad",
-    weakOcrBody: "Intenta de nuevo más cerca y con buena luz. Evita reflejos.",
-    tryAgain: "Intentar de nuevo",
-    preview: "Ver texto detectado",
-    hidePreview: "Ocultar texto detectado",
-    pasteTitle: "Pega una carta / email / mensaje",
-    pastePlaceholder: "Pega el texto del documento aquí…",
-    minChars: "Mínimo 20 caracteres. El máximo se limita en el servidor.",
-    analyzeText: "Analizar",
-    resultTitle: "Resultado",
-    type: "Tipo",
-    confidence: "Confianza",
-    summary: "Resumen",
-    whatItMeans: "Qué significa para ti",
-    nextSteps: "Qué hacer ahora",
-    redFlags: "Señales de alerta",
-    scripts: "Guiones",
-    callScript: "Guion para llamada",
-    emailTemplate: "Plantilla de email",
-    safetyNotes: "Notas de seguridad",
-    copy: "Copiar",
-    copied: "Copiado",
-    copyFail:
-      "No se pudo copiar (el navegador bloqueó el portapapeles). Puedes seleccionar y copiar manualmente.",
-    readAloud: "Leer en voz alta",
-    stop: "Detener",
-    repeat: "Repetir",
-    statusLikelyLegit: "Probablemente legítimo",
-    statusUnclear: "No está claro",
-    statusSuspicious: "Sospechoso",
-    urgencyHigh: "Alta urgencia",
-    urgencyMedium: "Urgencia media",
-    urgencyLow: "Baja urgencia",
-  },
-  en: {
-    tagline: "Understand the document. Check legitimacy. Get clear next steps.",
-    chooseLangTitle: "Choose your language",
-    spanish: "Español",
-    english: "English",
-    languageMenu: "Language",
-    tipsTitle: "Photo tips",
-    tips1: "1) Get close to the document",
-    tips2: "2) Bright light (avoid glare)",
-    tips3: "3) Fill the frame",
-    takePhoto: "Take photo",
-    choosePhoto: "Choose from library",
-    retake: "Retake",
-    preparingPhoto: "Preparing photo…",
-    readingText: "Reading text…",
-    understandingDoc: "Understanding document…",
-    analyzing: "Analyzing…",
-    weakOcrTitle: "We couldn’t read this clearly",
-    weakOcrBody: "Try again closer with better light. Avoid glare.",
-    tryAgain: "Try again",
-    preview: "Preview extracted text",
-    hidePreview: "Hide extracted text",
-    pasteTitle: "Paste a letter / email / message",
-    pastePlaceholder: "Paste the document text here…",
-    minChars: "Min 20 chars. Max is enforced server-side.",
-    analyzeText: "Analyze",
-    resultTitle: "Result",
-    type: "Type",
-    confidence: "Confidence",
-    summary: "Summary",
-    whatItMeans: "What this means for you",
-    nextSteps: "What to do next",
-    redFlags: "Red flags",
-    scripts: "Scripts",
-    callScript: "Call script",
-    emailTemplate: "Email template",
-    safetyNotes: "Safety notes",
-    copy: "Copy",
-    copied: "Copied",
-    copyFail:
-      "Copy failed (browser blocked clipboard). You can manually select and copy.",
-    readAloud: "Read aloud",
-    stop: "Stop",
-    repeat: "Repeat",
-    statusLikelyLegit: "Likely legit",
-    statusUnclear: "Unclear",
-    statusSuspicious: "Suspicious",
-    urgencyHigh: "High urgency",
-    urgencyMedium: "Medium urgency",
-    urgencyLow: "Low urgency",
-  },
-};
-
-function t(lang: Lang, key: string) {
-  return COPY[lang]?.[key] ?? COPY.en[key] ?? key;
-}
-
-function getStoredLang(): Lang | null {
-  if (typeof window === "undefined") return null;
-  const v = window.localStorage.getItem(STORAGE_LANG_KEY);
-  return v === "es" || v === "en" ? v : null;
-}
-function setStoredLang(lang: Lang) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(STORAGE_LANG_KEY, lang);
-}
-
-
-function withFollowStepsSuffix(summary: string, lang: Lang) {
-  const s = (summary || "").trim();
-  if (!s) return s;
-
-  const suffix =
-    lang === "es"
-      ? " Sigue los pasos a continuación para más información."
-      : " Follow the steps below for more information.";
-
-  // avoid doubling if already present
-  if (s.toLowerCase().includes(" follow the steps below")) return s;
-  if (s.toLowerCase().includes(" sigue los pasos a continuación")) return s;
-
-  return s.endsWith(".") ? s + suffix.slice(1) : s + suffix;
-}
-
-
-
-
-function getStoredSpeak(): boolean | null {
-  if (typeof window === "undefined") return null;
-  const v = window.localStorage.getItem(STORAGE_SPEAK_KEY);
-  if (v === null) return null;
-  return v === "1";
-}
-function setStoredSpeak(on: boolean) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(STORAGE_SPEAK_KEY, on ? "1" : "0");
-}
-
-function StatusBadge({ status, lang }: { status: string; lang: Lang }) {
+function StatusBadge({ status }: { status: string }) {
   const map: Record<string, { bg: string; label: string; dot: string }> = {
-    likely_legit: { bg: "#16a34a", label: t(lang, "statusLikelyLegit"), dot: "●" },
-    unclear: { bg: "#f59e0b", label: t(lang, "statusUnclear"), dot: "●" },
-    suspicious: { bg: "#dc2626", label: t(lang, "statusSuspicious"), dot: "●" },
+    likely_legit: { bg: "#16a34a", label: "Likely Legit", dot: "●" },
+    unclear: { bg: "#f59e0b", label: "Unclear", dot: "●" },
+    suspicious: { bg: "#dc2626", label: "Suspicious", dot: "●" },
   };
   const cfg = map[status] || { bg: "#6b7280", label: status, dot: "●" };
 
@@ -201,6 +48,7 @@ async function normalizeToJpegIfHeic(file: File): Promise<File> {
   }
 
   const heic2any = (await import("heic2any")).default;
+
   const converted = (await heic2any({
     blob: file,
     toType: "image/jpeg",
@@ -212,44 +60,15 @@ async function normalizeToJpegIfHeic(file: File): Promise<File> {
   });
 }
 
-function ProgressBar({ step, lang }: { step: Step; lang: Lang }) {
-  const pct =
-    step === "preparing" ? 12 : step === "ocr" ? 48 : step === "analyzing" ? 85 : step === "done" ? 100 : 0;
 
-  const label =
-    step === "preparing"
-      ? t(lang, "preparingPhoto")
-      : step === "ocr"
-        ? t(lang, "readingText")
-        : step === "analyzing"
-          ? t(lang, "understandingDoc")
-          : "";
+function StepCard({ step }: { step: any }) {
+  const color =
+    step.urgency === "high" ? "#dc2626" : step.urgency === "medium" ? "#f59e0b" : "#6b7280";
 
-  if (step === "idle" || step === "error") return null;
-
-  return (
-    <div style={{ marginTop: 10 }}>
-      <div style={{ color: "#111827", fontWeight: 800, fontSize: 13 }}>{label}</div>
-      <div
-        style={{
-          marginTop: 8,
-          height: 10,
-          borderRadius: 999,
-          background: "#e5e7eb",
-          overflow: "hidden",
-          border: "1px solid #e5e7eb",
-        }}
-      >
-        <div style={{ width: `${pct}%`, height: "100%", background: "#111827", borderRadius: 999 }} />
-      </div>
-    </div>
-  );
-}
-
-function StepCard({ step, lang }: { step: any; lang: Lang }) {
-  const color = step.urgency === "high" ? "#dc2626" : step.urgency === "medium" ? "#f59e0b" : "#6b7280";
   const urgencyLabel =
-    step.urgency === "high" ? t(lang, "urgencyHigh") : step.urgency === "medium" ? t(lang, "urgencyMedium") : t(lang, "urgencyLow");
+    step.urgency === "high" ? "High urgency" : step.urgency === "medium" ? "Medium urgency" : "Low urgency";
+
+  
 
   return (
     <div
@@ -272,7 +91,7 @@ function StepCard({ step, lang }: { step: any; lang: Lang }) {
   );
 }
 
-function CopyBlock({ label, text, lang }: { label: string; text: string; lang: Lang }) {
+function CopyBlock({ label, text }: { label: string; text: string }) {
   const [copied, setCopied] = useState(false);
 
   const copy = async () => {
@@ -281,7 +100,8 @@ function CopyBlock({ label, text, lang }: { label: string; text: string; lang: L
       setCopied(true);
       setTimeout(() => setCopied(false), 1200);
     } catch {
-      alert(t(lang, "copyFail"));
+      // Fallback if clipboard blocked
+      alert("Copy failed (browser blocked clipboard). You can manually select and copy.");
     }
   };
 
@@ -301,7 +121,7 @@ function CopyBlock({ label, text, lang }: { label: string; text: string; lang: L
             cursor: "pointer",
           }}
         >
-          {copied ? t(lang, "copied") : t(lang, "copy")}
+          {copied ? "Copied" : "Copy"}
         </button>
       </div>
 
@@ -334,7 +154,9 @@ function Card({ title, children }: { title?: string; children: React.ReactNode }
         background: "white",
       }}
     >
-      {title ? <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 10 }}>{title}</div> : null}
+      {title ? (
+        <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 10 }}>{title}</div>
+      ) : null}
       {children}
     </div>
   );
@@ -347,8 +169,7 @@ function speak(text: string, lang: Lang) {
   try {
     window.speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
-    u.lang = lang === "es" ? "es-MX" : "en-US"; // LatAm-ish
-// If you prefer Spanish US instead, use "es-US"
+    u.lang = lang === "es" ? "es-MX" : "en-US";
     u.rate = 1.0;
     u.pitch = 1.0;
     window.speechSynthesis.speak(u);
@@ -357,465 +178,204 @@ function speak(text: string, lang: Lang) {
   }
 }
 
-// Read response as JSON if possible; otherwise as text
-async function readResponseBody(resp: Response): Promise<{ json: any | null; text: string }> {
-  try {
-    const j = await resp.json();
-    return { json: j, text: "" };
-  } catch {
-    const t = await resp.text().catch(() => "");
-    return { json: null, text: t };
-  }
-}
 
-
-
-function buildSummaryPrefix(result: any, lang: Lang): string {
+function buildVoiceIntro(result: any, lang: Lang) {
   const status = result?.legitimacy_assessment?.status;
   const actionType = result?.ui_action_type;
 
-  if (status === "suspicious") {
-    return lang === "es"
-      ? "⚠️ Este documento parece sospechoso. Ten cuidado. "
-      : "⚠️ This document appears suspicious. Proceed with caution. ";
-  }
-
-  if (actionType === "action_required") {
-    return lang === "es"
-      ? "📌 Este documento requiere que tomes acción. "
-      : "📌 This document requires you to take action. ";
-  }
-
   if (actionType === "offer") {
     return lang === "es"
-      ? "ℹ️ Este documento parece ser una oferta. No es necesario que tomes acción. "
-      : "ℹ️ This document appears to be an offer. No action is required. ";
+      ? "ℹ️ Esto parece una oferta o promoción. No necesitas inscribirte. Estas cartas a veces usan urgencia para presionarte."
+      : "ℹ️ This appears to be an offer or promotion. You do not need to sign up. These letters often use urgency to pressure you.";
+  }
+
+  if (status === "suspicious") {
+    return lang === "es"
+      ? "🚫 Este documento parece sospechoso. No llames ni hagas clic en enlaces hasta verificarlo."
+      : "🚫 This document looks suspicious. Do not call or click links until you verify it.";
   }
 
   if (status === "unclear") {
     return lang === "es"
-      ? "ℹ️ No está completamente claro. Te doy los mejores pasos posibles. "
-      : "ℹ️ It’s not completely clear. Here are the best next steps. ";
+      ? "⚠️ No está claro si este documento es legítimo. Trátalo con precaución."
+      : "⚠️ It’s unclear if this document is legitimate. Treat it with caution.";
   }
 
-  return "";
+  return lang === "es" ? "✅ Este documento parece legítimo." : "✅ This document looks likely legitimate.";
 }
 
-function statusSpokenLine(step: Step, lang: Lang) {
-  if (step === "preparing") return lang === "es" ? "Preparando la foto." : "Preparing the photo.";
-  if (step === "ocr") return lang === "es" ? "Leyendo el texto." : "Reading the text.";
-  if (step === "analyzing") return lang === "es" ? "Entendiendo el documento." : "Understanding the document.";
-  return "";
+function speakRedFlags(result: any, lang: Lang) {
+  const status = result?.legitimacy_assessment?.status;
+  if (status !== "suspicious" && status !== "unclear") return;
+
+  const flags = Array.isArray(result?.red_flags) ? result.red_flags : [];
+  if (!flags.length) return;
+
+  const intro = lang === "es" ? "Señales de alerta importantes." : "Important red flags.";
+  const labelsEs = ["Uno", "Dos", "Tres", "Cuatro"];
+  const labelsEn = ["One", "Two", "Three", "Four"];
+
+  const items = flags.slice(0, 4).map((rf: string, idx: number) => {
+    const n = lang === "es" ? (labelsEs[idx] || String(idx + 1)) : (labelsEn[idx] || String(idx + 1));
+    return `${n}: ${rf}`;
+  });
+
+  speak(`${intro} ${items.join(". ")}`, lang);
 }
 
 export default function DoculeaTestPage() {
-  const [lang, setLang] = useState<Lang>("es");
-  const [showLangOnboarding, setShowLangOnboarding] = useState(false);
-
-  const [speakOn, setSpeakOn] = useState(true);
-
-  const [text, setText] = useState("FINAL NOTICE: Pay $500 in gift cards or you will be arrested.");
+  const [lang, setLang] = useState<Lang>("en");
+  const [text, setText] = useState(
+    "FINAL NOTICE: Pay $500 in gift cards or you will be arrested."
+  );
+  const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
-
-  const [step, setStep] = useState<Step>("idle");
-  const [extractedText, setExtractedText] = useState<string | null>(null);
-  const [showExtracted, setShowExtracted] = useState(false);
   const [ocrWarning, setOcrWarning] = useState<string | null>(null);
-
-  const cameraInputRef = useRef<HTMLInputElement | null>(null);
-  const libraryInputRef = useRef<HTMLInputElement | null>(null);
-
-  const [photoFile, setPhotoFile] = useState<File | null>(null);
-  const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
-
-  // ✅ Critical: remember last photo for retry
-  const lastPhotoRef = useRef<File | null>(null);
-  const lastModeRef = useRef<"photo" | "text">("photo");
-  const [onboardingSpeakOn, setOnboardingSpeakOn] = useState(true);
-
-function onboardingVoiceLine(l: Lang) {
-  return l === "es"
-    ? "Perfecto. Voy a leer el resumen en voz alta."
-    : "Great. I will read the summary out loud.";
-}
-
-
-  useEffect(() => {
-    const stored = getStoredLang();
-    if (stored) {
-      setLang(stored);
-      setShowLangOnboarding(false);
-    } else {
-      setLang("es"); // Spanish-first for mom testing
-      setShowLangOnboarding(true);
-    }
-
-    const speakStored = getStoredSpeak();
-    if (speakStored === null) setSpeakOn(true);
-    else setSpeakOn(speakStored);
-
-    if (speakStored === null) {
-  setSpeakOn(true);
-  setOnboardingSpeakOn(true);
-} else {
-  setSpeakOn(speakStored);
-  setOnboardingSpeakOn(speakStored);
-}
-
-  }, []);
-
-  useEffect(() => {
-    setStoredLang(lang);
-  }, [lang]);
-
-  useEffect(() => {
-    setStoredSpeak(speakOn);
-  }, [speakOn]);
-
-  
+  const [status, setStatus]=useState<string>("");
 
   const canAnalyze = useMemo(() => text.trim().length >= 20, [text]);
-  const loading = step === "preparing" || step === "ocr" || step === "analyzing";
 
-  const lastSpokenStepRef = useRef<Step | null>(null);
-
-  useEffect(() => {
-    if (!speakOn) return;
-    if (step !== "preparing" && step !== "ocr" && step !== "analyzing") return;
-
-    if (lastSpokenStepRef.current === step) return;
-    lastSpokenStepRef.current = step;
-
-    // iPhone Safari: speaking here helps user know progress even if they aren't watching the screen.
-    const line = statusSpokenLine(step, lang);
-    if (line) speak(line, lang);
-  }, [step, speakOn, lang]);
-
-
-  async function runFromText() {
-    lastModeRef.current = "text";
+  async function run() {
+    setLoading(true);
     setError(null);
-    setResult(null);
-    setExtractedText(null);
     setOcrWarning(null);
-    setStep("analyzing");
+    setResult(null);
 
     try {
       const r = await fetch("/api/doculea/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: text.trim(), language: lang }),
+        body: JSON.stringify({ documentText: text, lang }),
       });
 
-      const { json, text: rawText } = await readResponseBody(r);
+      const raw = await r.text();
 
-      if (!r.ok || json?.ok === false || json?.error) {
-        console.error("[DOCULEA] analyze(text) failed", { status: r.status, json, rawText });
-        const msg =
-          json?.error || json?.message || rawText || `Request failed (HTTP ${r.status})`;
-        const details =
-          json?.details
-            ? typeof json.details === "string"
-              ? json.details
-              : JSON.stringify(json.details, null, 2)
-            : "";
-        throw new Error(details ? `${msg}\n\n${details}` : msg);
+      if (!raw) {
+        throw new Error(`Empty response body (HTTP ${r.status}). Check Vercel function logs.`);
+      }
+
+      let json: any;
+      try {
+        json = JSON.parse(raw);
+      } catch {
+        throw new Error(`Non-JSON response (HTTP ${r.status}). First 400 chars:\n${raw.slice(0, 400)}`);
+      }
+
+      if (!r.ok) {
+        throw new Error(json?.error || `Request failed (HTTP ${r.status})`);
       }
 
       setResult(json);
-      setStep("done");
-
-      if (speakOn && json?.plain_language_summary) {
-      const spoken = withFollowStepsSuffix(String(json.plain_language_summary || ""), lang);
-      speak(spoken, lang);
-      }
-
     } catch (e: any) {
-      setStep("error");
       setError(e?.message || "Unknown error");
+    } finally {
+      setLoading(false);
     }
+
   }
 
-  async function onPickPhoto(e: React.ChangeEvent<HTMLInputElement>) {
-    if (typeof window === "undefined") return;
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
 
-    const f = e.target.files?.[0] || null;
-    // reset the input value so choosing the same file again still triggers onChange
-    e.currentTarget.value = "";
-    if (!f) return;
+  const lastAnnouncedStep = useRef<Step | null>(null);
+  const [ocrDebug, setOcrDebug] = useState<any>(null);
 
-    lastModeRef.current = "photo";
-    setError(null);
-    setResult(null);
-    setExtractedText(null);
-    setOcrWarning(null);
+async function onPickPhoto(e: React.ChangeEvent<HTMLInputElement>) {
+  // ✅ Guard: this handler should never run on the server, but prevents crashes if bundled oddly
+  if (typeof window === "undefined") return;
 
-    let finalFile = f;
+  const f = e.target.files?.[0] || null;
+  if (!f) return;
+
+  const isHeic =
+    /heic|heif/i.test(f.type) || /\.heic$|\.heif$/i.test(f.name);
+
+  let finalFile = f;
+
+  if (isHeic) {
     try {
-      finalFile = await normalizeToJpegIfHeic(f);
+      const mod = await import("heic2any"); // client-only load
+      const heic2any = mod.default;
+
+      const blob = (await heic2any({
+        blob: f,
+        toType: "image/jpeg",
+        quality: 0.9,
+      })) as Blob;
+
+      finalFile = new File([blob], f.name.replace(/\.(heic|heif)$/i, ".jpg"), {
+        type: "image/jpeg",
+      });
     } catch {
-      setStep("error");
       setError(
-        lang === "es"
-          ? "Esta foto es HEIC y no se pudo convertir en este navegador. Por favor toma otra foto o cambia el iPhone a 'Más compatible'."
-          : "This photo is HEIC and couldn’t be converted in this browser. Please retake or switch iPhone Camera Formats to 'Most Compatible'."
+        "This photo is HEIC and couldn’t be converted in this browser. Please retake or switch iPhone Camera Formats to “Most Compatible”."
       );
       return;
     }
-
-    // ✅ store for retry
-    setPhotoFile(finalFile);
-    lastPhotoRef.current = finalFile;
-
-    if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
-    setPhotoPreviewUrl(URL.createObjectURL(finalFile));
-
-    // ✅ Auto-run
-    try {
-      await runFromPhoto(finalFile, lang);
-    } catch (err: any) {
-      setStep("error");
-      setError(err?.message || "Unknown error");
-    }
   }
 
-  async function runFromPhoto(file: File, language: Lang) {
-    lastModeRef.current = "photo";
-    lastPhotoRef.current = file;
+  setPhotoFile(finalFile);
+  setOcrDebug(null);
 
-    setError(null);
-    setResult(null);
-    setExtractedText(null);
-    setOcrWarning(null);
+  if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
+  setPhotoPreviewUrl(URL.createObjectURL(finalFile));
+}
 
-    setStep("preparing");
-    const normalized = await normalizeToJpegIfHeic(file);
-    lastPhotoRef.current = normalized;
+  async function runFromPhoto(file: File, language: "en" | "es") {
+  setLoading(true);
+  setStatus("Preparing photo...");
 
-    setStep("ocr");
-    const ocrText = await ocrInBrowser(normalized, language);
-    setExtractedText(ocrText);
+  const normalized = await normalizeToJpegIfHeic(file);
 
-    const q = isOcrTextUsable(ocrText, language);
+  setStatus("Reading text from photo...");
+  const text = await ocrInBrowser(normalized, language);
 
-    if (q.level === "fail") {
-      setStep("error");
-      const msg =
-        language === "es"
-          ? `${t(language, "weakOcrTitle")} (caracteres=${q.charCount}, palabras=${q.wordCount}, frases=${q.phraseCount}, líneas=${q.lineCount}).\n\n${t(language, "weakOcrBody")}`
-          : `${t(language, "weakOcrTitle")} (chars=${q.charCount}, words=${q.wordCount}, phrases=${q.phraseCount}, lines=${q.lineCount}).\n\n${t(language, "weakOcrBody")}`;
-      throw new Error(msg);
-    }
-
-    if (q.level === "warn") {
-      const warnMsg =
-        language === "es"
-          ? `OCR incompleto: (caracteres=${q.charCount}, palabras=${q.wordCount}, frases=${q.phraseCount}, líneas=${q.lineCount}). Responderemos con lo mejor disponible.`
-          : `OCR may be incomplete: (chars=${q.charCount}, words=${q.wordCount}, phrases=${q.phraseCount}, lines=${q.lineCount}). We will respond with the best available info.`;
-      setOcrWarning(warnMsg);
-    }
-
-    const cleaned = cleanOcrText(ocrText).trim();
-
-    setStep("analyzing");
-    const resp = await fetch("/api/doculea/analyze", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: cleaned, language }),
-    });
-
-    const { json, text: rawText } = await readResponseBody(resp);
-
-    if (!resp.ok || json?.ok === false || json?.error) {
-      console.error("[DOCULEA] analyze(photo) failed", { status: resp.status, json, rawText });
-      const msg =
-        json?.error || json?.message || rawText || `Analyze failed (${resp.status})`;
-      const details =
-        json?.details
-          ? typeof json.details === "string"
-            ? json.details
-            : JSON.stringify(json.details, null, 2)
-          : "";
-      throw new Error(details ? `${msg}\n\n${details}` : msg);
-    }
-
-    setResult(json);
-    setStep("done");
-
-    if (speakOn && json?.plain_language_summary) {
-      const spoken = withFollowStepsSuffix(String(json.plain_language_summary || ""), language);
-      speak(spoken, language);
-    }
-
+  const q = isOcrTextUsable(text);
+  if (!q.ok) {
+    setLoading(false);
+    setStatus("");
+    throw new Error(
+      `OCR was too weak (chars=${q.charCount}, words=${q.wordCount}, phrases=${q.phraseCount}, lines=${q.lineCount}). Retake photo: closer, brighter, avoid glare.`
+    );
   }
 
-  async function retryLast() {
-    console.log("[DOCULEA] retryLast()", {
-      hasLastPhoto: !!lastPhotoRef.current,
-      hasPhotoFile: !!photoFile,
-      lastMode: lastModeRef.current,
-      step,
-      lang,
-    });
+  setStatus("Analyzing document...");
+  const resp = await fetch("/api/doculea/analyze", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text: text.trim(), language }),
+  });
 
-    setError(null);
-    setResult(null);
-    setExtractedText(null);
-
-    const file = lastPhotoRef.current || photoFile;
-    if (file) {
-      try {
-        await runFromPhoto(file, lang);
-      } catch (err: any) {
-        setStep("error");
-        setError(err?.message || "Unknown error");
-      }
-      return;
-    }
-
-    if (canAnalyze) {
-      await runFromText();
-      return;
-    }
-
-    setStep("idle");
+  const json = await resp.json();
+  if (!resp.ok) {
+    setLoading(false);
+    setStatus("");
+    throw new Error(json?.error || `Analyze failed (${resp.status})`);
   }
 
-  const pickCamera = () => cameraInputRef.current?.click();
-  const pickLibrary = () => libraryInputRef.current?.click();
-
-  const setLanguage = (l: Lang) => {
-  setLang(l);
-  setStoredLang(l);
-
-  // apply onboarding choice
-  setSpeakOn(onboardingSpeakOn);
-  setStoredSpeak(onboardingSpeakOn);
-
-  setShowLangOnboarding(false);
-
-  // iPhone Safari: do a tiny speech here to "unlock" voice for later
-  if (onboardingSpeakOn) {
-    speak(onboardingVoiceLine(l), l);
-  }
-};
+  setResult(json);
+  setLoading(false);
+  setStatus("");
+}
 
 
-  const stopSpeaking = () => {
-    if (typeof window === "undefined") return;
-    if (!("speechSynthesis" in window)) return;
-    window.speechSynthesis.cancel();
-  };
-
-  const repeatSpeaking = () => {
-    const s = String(result?.plain_language_summary || "");
-    if (!s) return;
-    speak(withFollowStepsSuffix(s, lang), lang);
-     };
 
   return (
     <div style={{ minHeight: "100vh", background: "#f8fafc" }}>
       <div style={{ maxWidth: 980, margin: "0 auto", padding: "28px 16px" }}>
-        {/* Language onboarding modal */}
-        {showLangOnboarding && (
-          <div
-            style={{
-              position: "fixed",
-              inset: 0,
-              background: "rgba(0,0,0,0.35)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              padding: 16,
-              zIndex: 50,
-            }}
-          >
-            <div style={{ width: "100%", maxWidth: 420, background: "white", borderRadius: 16, padding: 16, border: "1px solid #e5e7eb" }}>
-              <div style={{ fontWeight: 900, fontSize: 18 }}>{t("es", "chooseLangTitle")}</div>
-              <div style={{ color: "#6b7280", marginTop: 6 }}>
-                {"Selecciona Español o English para continuar."}
-                <div style={{ marginTop: 12 }}>
-              <label style={{ display: "flex", gap: 10, alignItems: "center", fontWeight: 800, color: "#111827" }}>
-                <input
-                  type="checkbox"
-                  checked={onboardingSpeakOn}
-                  onChange={(e) => setOnboardingSpeakOn(e.target.checked)}
-                />
-                {lang === "es" ? "Leer resultados en voz alta" : "Read results aloud"}
-              </label>
-              <div style={{ color: "#6b7280", fontSize: 12, marginTop: 6 }}>
-                {lang === "es"
-                  ? "Puedes cambiar esto después."
-                  : "You can change this later."}
-              </div>
-</div>
-
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 10, marginTop: 14 }}>
-                <button
-                  onClick={() => setLanguage("es")}
-                  style={{
-                    border: "1px solid #e5e7eb",
-                    borderRadius: 12,
-                    padding: "12px 14px",
-                    background: "#111827",
-                    color: "white",
-                    fontWeight: 900,
-                    cursor: "pointer",
-                    fontSize: 16,
-                  }}
-                >
-                  {t("es", "spanish")}
-                </button>
-                <button
-                  onClick={() => setLanguage("en")}
-                  style={{
-                    border: "1px solid #e5e7eb",
-                    borderRadius: 12,
-                    padding: "12px 14px",
-                    background: "white",
-                    color: "#111827",
-                    fontWeight: 900,
-                    cursor: "pointer",
-                    fontSize: 16,
-                  }}
-                >
-                  {t("en", "english")}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* Header */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
           <div>
-            <div style={{ fontSize: 26, fontWeight: 900, letterSpacing: -0.2 }}>DOCU-LEA</div>
-            <div style={{ color: "#6b7280", marginTop: 6 }}>{t(lang, "tagline")}</div>
+            <div style={{ fontSize: 26, fontWeight: 900, letterSpacing: -0.2 }}>DOCULEA</div>
+            <div style={{ color: "#6b7280", marginTop: 6 }}>
+              Understand the document. Check legitimacy. Get next steps.
+            </div>
           </div>
 
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <div style={{ color: "#6b7280", fontSize: 12, fontWeight: 800 }}>{t(lang, "languageMenu")}</div>
-
+          <div style={{ display: "flex", gap: 8 }}>
             <button
-              onClick={() => setLanguage("es")}
-              style={{
-                border: "1px solid #e5e7eb",
-                borderRadius: 10,
-                padding: "8px 10px",
-                background: lang === "es" ? "#111827" : "white",
-                color: lang === "es" ? "white" : "#111827",
-                fontWeight: 800,
-                cursor: "pointer",
-              }}
-            >
-              {t(lang, "spanish")}
-            </button>
-
-            <button
-              onClick={() => setLanguage("en")}
+              onClick={() => setLang("en")}
               style={{
                 border: "1px solid #e5e7eb",
                 borderRadius: 10,
@@ -826,219 +386,78 @@ function onboardingVoiceLine(l: Lang) {
                 cursor: "pointer",
               }}
             >
-              {t(lang, "english")}
+              EN
+            </button>
+            <button
+              onClick={() => setLang("es")}
+              style={{
+                border: "1px solid #e5e7eb",
+                borderRadius: 10,
+                padding: "8px 10px",
+                background: lang === "es" ? "#111827" : "white",
+                color: lang === "es" ? "white" : "#111827",
+                fontWeight: 800,
+                cursor: "pointer",
+              }}
+            >
+              ES
             </button>
           </div>
         </div>
 
+        
+
         <div style={{ height: 16 }} />
 
-        {/* Photo flow */}
-        <Card title={`${t(lang, "tipsTitle")}`}>
-          <div style={{ color: "#111827", fontWeight: 700, lineHeight: 1.4 }}>
-            <div>{t(lang, "tips1")}</div>
-            <div>{t(lang, "tips2")}</div>
-            <div>{t(lang, "tips3")}</div>
-          </div>
+        
 
-          {/* Hidden inputs */}
-          <input
-            ref={cameraInputRef}
-            type="file"
-            accept="image/*"
-            capture="environment"
-            onChange={onPickPhoto}
-            style={{ display: "none" }}
-          />
-          <input
-            ref={libraryInputRef}
-            type="file"
-            accept="image/*"
-            onChange={onPickPhoto}
-            style={{ display: "none" }}
-          />
+        {/* Input */}
+        <Card title="Photo → OCR → Analyze (single image)">
+  <input type="file" accept="image/*" capture="environment" onChange={onPickPhoto} />
 
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
-            <button
-              onClick={pickCamera}
-              disabled={loading}
-              style={{
-                border: "1px solid #e5e7eb",
-                borderRadius: 12,
-                padding: "12px 14px",
-                background: loading ? "#e5e7eb" : "#111827",
-                color: loading ? "#6b7280" : "white",
-                fontWeight: 900,
-                cursor: loading ? "not-allowed" : "pointer",
-                minWidth: 170,
-              }}
-            >
-              {t(lang, "takePhoto")}
-            </button>
+  {photoPreviewUrl && (
+    <div style={{ marginTop: 10 }}>
+      <img
+        src={photoPreviewUrl}
+        style={{ maxWidth: "100%", borderRadius: 12, border: "1px solid #e5e7eb" }}
+        alt="preview"
+      />
+    </div>
+  )}
 
-            <button
-              onClick={pickLibrary}
-              disabled={loading}
-              style={{
-                border: "1px solid #e5e7eb",
-                borderRadius: 12,
-                padding: "12px 14px",
-                background: "white",
-                color: "#111827",
-                fontWeight: 900,
-                cursor: loading ? "not-allowed" : "pointer",
-                minWidth: 210,
-                opacity: loading ? 0.6 : 1,
-              }}
-            >
-              {t(lang, "choosePhoto")}
-            </button>
-          </div>
+  <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
+    <button
+      onClick={()=>{
+        if (!photoFile) return;
+        runFromPhoto(photoFile, lang);
+      }}
+      disabled={!photoFile || loading}
+      style={{
+        border: "1px solid #e5e7eb",
+        borderRadius: 12,
+        padding: "10px 14px",
+        background: !photoFile || loading ? "#e5e7eb" : "#111827",
+        color: !photoFile || loading ? "#6b7280" : "white",
+        fontWeight: 900,
+        cursor: !photoFile || loading ? "not-allowed" : "pointer",
+        minWidth: 160,
+      }}
+    >
+      {loading ? "Analyzing…" : "Analyze Photo"}
+    </button>
+  </div>
 
-          {photoPreviewUrl && (
-            <div style={{ marginTop: 12 }}>
-              <img
-                src={photoPreviewUrl}
-                style={{ maxWidth: "100%", borderRadius: 12, border: "1px solid #e5e7eb" }}
-                alt="preview"
-              />
-            </div>
-          )}
+  {ocrDebug && (
+    <div style={{ marginTop: 10, fontSize: 12, color: "#6b7280" }}>
+      OCR quality: {ocrDebug.quality?.score} ({ocrDebug.quality?.ok ? "ok" : "retake"})
+    </div>
+  )}
+</Card>
 
-          <ProgressBar step={step} lang={lang} />
+<div style={{ height: 12 }} />
 
-          {ocrWarning && (
-            <div
-              style={{
-                marginTop: 12,
-                background: "#fffbeb",
-                border: "1px solid #fde68a",
-                color: "#92400e",
-                padding: 12,
-                borderRadius: 12,
-                whiteSpace: "pre-wrap",
-              }}
-            >
-              <strong>{lang === "es" ? "Aviso:" : "Warning:"}</strong> {ocrWarning}
-            </div>
-          )}
-
-          {/* Speech controls */}
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10, alignItems: "center" }}>
-            <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 800, color: "#111827" }}>
-              <input type="checkbox" checked={speakOn} onChange={(e) => setSpeakOn(e.target.checked)} disabled={loading} />
-              {t(lang, "readAloud")}
-            </label>
-
-            <button
-              onClick={stopSpeaking}
-              disabled={loading}
-              style={{
-                border: "1px solid #e5e7eb",
-                borderRadius: 10,
-                padding: "8px 10px",
-                background: "white",
-                color: "#111827",
-                fontWeight: 800,
-                cursor: loading ? "not-allowed" : "pointer",
-                opacity: loading ? 0.6 : 1,
-              }}
-            >
-              {t(lang, "stop")}
-            </button>
-
-            <button
-              onClick={repeatSpeaking}
-              disabled={!result?.plain_language_summary}
-              style={{
-                border: "1px solid #e5e7eb",
-                borderRadius: 10,
-                padding: "8px 10px",
-                background: !result?.plain_language_summary ? "#e5e7eb" : "white",
-                color: !result?.plain_language_summary ? "#6b7280" : "#111827",
-                fontWeight: 800,
-                cursor: !result?.plain_language_summary ? "not-allowed" : "pointer",
-              }}
-            >
-              {t(lang, "repeat")}
-            </button>
-          </div>
-
-          {/* Extracted text preview */}
-          {extractedText && (
-            <div style={{ marginTop: 10 }}>
-              <button
-                onClick={() => setShowExtracted((v) => !v)}
-                style={{
-                  border: "1px solid #e5e7eb",
-                  borderRadius: 10,
-                  padding: "8px 10px",
-                  background: "white",
-                  color: "#111827",
-                  fontWeight: 800,
-                  cursor: "pointer",
-                }}
-              >
-                {showExtracted ? t(lang, "hidePreview") : t(lang, "preview")}
-              </button>
-
-              {showExtracted && (
-                <pre
-                  style={{
-                    marginTop: 8,
-                    background: "#f3f4f6",
-                    border: "1px solid #e5e7eb",
-                    padding: 12,
-                    borderRadius: 12,
-                    whiteSpace: "pre-wrap",
-                    wordBreak: "break-word",
-                    fontSize: 13,
-                    lineHeight: 1.35,
-                  }}
-                >
-                  {extractedText}
-                </pre>
-              )}
-            </div>
-          )}
-
-          {error && (
-            <div
-              style={{
-                marginTop: 12,
-                background: "#fef2f2",
-                border: "1px solid #fecaca",
-                color: "#991b1b",
-                padding: 12,
-                borderRadius: 12,
-                whiteSpace: "pre-wrap",
-              }}
-            >
-              <strong>Error:</strong> {error}
-              <div style={{ marginTop: 10 }}>
-                <button
-                  onClick={() => void retryLast()}
-                  style={{
-                    border: "1px solid #e5e7eb",
-                    borderRadius: 12,
-                    padding: "10px 14px",
-                    background: "#111827",
-                    color: "white",
-                    fontWeight: 900,
-                    cursor: "pointer",
-                  }}
-                >
-                  {t(lang, "tryAgain")}
-                </button>
-              </div>
-            </div>
-          )}
-        </Card>
-
-        <div style={{ height: 12 }} />
-
-        {/* Paste text flow */}
-        <Card title={t(lang, "pasteTitle")}>
+        
+        <Card title="Paste a letter / email / message">
           <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
@@ -1053,14 +472,16 @@ function onboardingVoiceLine(l: Lang) {
               resize: "vertical",
               outline: "none",
             }}
-            placeholder={t(lang, "pastePlaceholder")}
+            placeholder="Paste the document text here…"
           />
 
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 10, gap: 12 }}>
-            <div style={{ color: "#6b7280", fontSize: 12 }}>{t(lang, "minChars")}</div>
+            <div style={{ color: "#6b7280", fontSize: 12 }}>
+              Min 20 chars. Max is enforced server-side.
+            </div>
 
             <button
-              onClick={() => void runFromText()}
+              onClick={run}
               disabled={!canAnalyze || loading}
               style={{
                 border: "1px solid #e5e7eb",
@@ -1073,9 +494,25 @@ function onboardingVoiceLine(l: Lang) {
                 minWidth: 140,
               }}
             >
-              {loading ? t(lang, "analyzing") : t(lang, "analyzeText")}
+              {loading ? "Analyzing…" : "Analyze"}
             </button>
           </div>
+
+          {error && (
+            <div
+              style={{
+                marginTop: 12,
+                background: "#fef2f2",
+                border: "1px solid #fecaca",
+                color: "#991b1b",
+                padding: 12,
+                borderRadius: 12,
+                whiteSpace: "pre-wrap",
+              }}
+            >
+              <strong>Error:</strong> {error}
+            </div>
+          )}
         </Card>
 
         {/* Results */}
@@ -1083,42 +520,42 @@ function onboardingVoiceLine(l: Lang) {
           <div style={{ marginTop: 16, display: "grid", gridTemplateColumns: "1fr", gap: 12 }}>
             <Card>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
-                <StatusBadge status={result.legitimacy_assessment?.status} lang={lang} />
+                <StatusBadge status={result.legitimacy_assessment?.status} />
 
                 <div style={{ color: "#6b7280", fontSize: 13 }}>
                   <div>
-                    <strong>{t(lang, "type")}:</strong> {result.document_type?.category} ({result.document_type?.confidence})
+                    <strong>Type:</strong> {result.document_type?.category} ({result.document_type?.confidence})
                   </div>
                   <div style={{ marginTop: 4 }}>
-                    <strong>{t(lang, "confidence")}:</strong> {result.legitimacy_assessment?.confidence}
+                    <strong>Confidence:</strong> {result.legitimacy_assessment?.confidence}
                   </div>
                 </div>
               </div>
 
               <div style={{ marginTop: 12, color: "#111827" }}>
-                <div style={{ fontWeight: 900, fontSize: 16 }}>{t(lang, "summary")}</div>
-                <div style={{ marginTop: 6 }}>
-                  {withFollowStepsSuffix(String(result.plain_language_summary || ""), lang)}
-                  </div>
+                <div style={{ fontWeight: 900, fontSize: 16 }}>Summary</div>
+                <div style={{ marginTop: 6 }}>{result.plain_language_summary}</div>
               </div>
 
               <div style={{ marginTop: 12, color: "#111827" }}>
-                <div style={{ fontWeight: 900, fontSize: 16 }}>{t(lang, "whatItMeans")}</div>
+                <div style={{ fontWeight: 900, fontSize: 16 }}>What this means for you</div>
                 <div style={{ marginTop: 6 }}>{result.what_this_means_for_you}</div>
               </div>
 
-              <div style={{ marginTop: 12, color: "#6b7280", fontSize: 13 }}>{result.legitimacy_assessment?.summary_reason}</div>
+              <div style={{ marginTop: 12, color: "#6b7280", fontSize: 13 }}>
+                {result.legitimacy_assessment?.summary_reason}
+              </div>
             </Card>
 
-            <Card title={t(lang, "nextSteps")}>
+            <Card title="What to do next">
               <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 10 }}>
                 {Array.isArray(result.step_by_step_actions) &&
-                  result.step_by_step_actions.map((s: any) => <StepCard key={s.step} step={s} lang={lang} />)}
+                  result.step_by_step_actions.map((s: any) => <StepCard key={s.step} step={s} />)}
               </div>
             </Card>
 
             {Array.isArray(result.red_flags) && result.red_flags.length > 0 && (
-              <Card title={t(lang, "redFlags")}>
+              <Card title="Red flags">
                 <ul style={{ margin: 0, paddingLeft: 18 }}>
                   {result.red_flags.map((rf: string, idx: number) => (
                     <li key={idx} style={{ marginBottom: 6 }}>
@@ -1130,21 +567,22 @@ function onboardingVoiceLine(l: Lang) {
             )}
 
             {result?.ui_action_type !== "offer" && (result.suggested_scripts?.call_script || result.suggested_scripts?.email_template) && (
-              <Card title={t(lang, "scripts")}>
+              <Card title="Scripts">
                 {result.suggested_scripts?.call_script && (
-                  <CopyBlock label={t(lang, "callScript")} text={result.suggested_scripts.call_script} lang={lang} />
+                  <CopyBlock label="Call script" text={result.suggested_scripts.call_script} />
                 )}
                 {result.suggested_scripts?.email_template && (
-                  <CopyBlock label={t(lang, "emailTemplate")} text={result.suggested_scripts.email_template} lang={lang} />
+                  <CopyBlock label="Email template" text={result.suggested_scripts.email_template} />
                 )}
               </Card>
             )}
 
-            {result.safety_notes && <Card title={t(lang, "safetyNotes")}>{result.safety_notes}</Card>}
+            {result.safety_notes && <Card title="Safety notes">{result.safety_notes}</Card>}
           </div>
         )}
       </div>
     </div>
   );
 }
+
 
