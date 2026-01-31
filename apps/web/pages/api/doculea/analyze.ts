@@ -100,6 +100,108 @@ function pickDocumentText(body: any): string | undefined {
   );
 }
 
+
+type UiActionType = "action_required" | "informational" | "offer";
+
+function deriveUiActionType(result: any): UiActionType {
+  const category = result?.document_type?.category;
+  const status = result?.legitimacy_assessment?.status;
+
+  // suspicious -> treat as informational (no direct actions that contact unknown parties)
+  if (status === "suspicious") return "informational";
+
+  // obvious offers/promos
+  if (category === "credit_card") return "offer";
+  if (category === "bank" && (!result?.recommended_actions || result.recommended_actions.length === 0)) return "offer";
+
+  // usually actionable
+  if (["utility", "medical", "insurance", "debt_collection", "government", "employment", "school"].includes(category)) {
+    return "action_required";
+  }
+
+  return "informational";
+}
+
+function sanitizeOfferOutput(result: any, language: "en" | "es") {
+  const safeSteps =
+    language === "es"
+      ? [
+          {
+            step: 1,
+            title: "Identificar que es una oferta",
+            description:
+              "Este documento parece ser una oferta o promoción. No es obligatorio inscribirse ni comprar nada.",
+            urgency: "low",
+          },
+          {
+            step: 2,
+            title: "Ignorar si no te interesa",
+            description:
+              "Si no lo solicitaste o no lo necesitas, puedes ignorarlo. Evita llamar números o visitar enlaces impresos en la carta.",
+            urgency: "low",
+          },
+          {
+            step: 3,
+            title: "Verificar por canales oficiales (opcional)",
+            description:
+              "Si te interesa, busca la empresa por tu cuenta (sitio oficial desde búsqueda/BBB) y compara alternativas antes de tomar una decisión.",
+            urgency: "low",
+          },
+        ]
+      : [
+          {
+            step: 1,
+            title: "Recognize this is an offer",
+            description:
+              "This document appears to be a marketing offer or promotion. You are not required to sign up or purchase anything.",
+            urgency: "low",
+          },
+          {
+            step: 2,
+            title: "Ignore if you’re not interested",
+            description:
+              "If you didn’t request it or don’t need it, you can ignore it. Avoid calling numbers or clicking links printed on the letter.",
+            urgency: "low",
+          },
+          {
+            step: 3,
+            title: "Verify via official sources (optional)",
+            description:
+              "If you want it, look up the company independently (official website via search/BBB) and compare alternatives before deciding.",
+            urgency: "low",
+          },
+        ];
+
+  result.step_by_step_actions = safeSteps;
+
+  // Do NOT encourage contact/purchase for offers
+  result.recommended_actions = [];
+
+  // Remove scripts (empty strings keep schema happy)
+  result.suggested_scripts = { call_script: "", email_template: "" };
+
+  const extraSafety =
+    language === "es"
+      ? "Nota: Para ofertas, evita llamar números o visitar enlaces impresos en la carta. Si decides investigar, busca la empresa por tu cuenta."
+      : "Note: For offers, avoid calling numbers or clicking links printed on the letter. If you investigate, look up the company independently.";
+
+  result.safety_notes = result.safety_notes ? `${result.safety_notes}\n\n${extraSafety}` : extraSafety;
+
+  if (!Array.isArray(result.red_flags)) result.red_flags = [];
+  if (language === "es") {
+    if (!result.red_flags.includes("Es una oferta/promoción: no es obligatorio inscribirse.")) {
+      result.red_flags.unshift("Es una oferta/promoción: no es obligatorio inscribirse.");
+    }
+  } else {
+    if (!result.red_flags.includes("This is an offer/promotion: you are not required to sign up.")) {
+      result.red_flags.unshift("This is an offer/promotion: you are not required to sign up.");
+    }
+  }
+
+  return result;
+}
+
+
 // ✅ one-shot repair retry when JSON shape is almost right but fails Zod
 async function repairToSchemaOnce(args: {
   rawJson: any;
@@ -138,25 +240,6 @@ async function repairToSchemaOnce(args: {
 }
 
 // ---------- handler ----------
-
-function deriveUiActionType(result: any): "action_required" | "informational" | "offer" {
-  const category = result?.document_type?.category;
-  const status = result?.legitimacy_assessment?.status;
-
-  // If suspicious, we treat as informational + caution (avoid directing to contact the letter)
-  if (status === "suspicious") return "informational";
-
-  // Likely marketing / promotions: don't encourage engagement
-  if (category === "credit_card") return "offer";
-
-  // Common "action required" buckets
-  if (["utility", "medical", "insurance", "debt_collection", "government", "employment", "school"].includes(category)) {
-    return "action_required";
-  }
-
-  // Default
-  return "informational";
-}
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
@@ -271,11 +354,17 @@ try {
     // Apply hard safety overrides (use original text for scam signals)
     result = applyHardSafetyOverride(result, trimmedText, language);
 
+    const ui_action_type = deriveUiActionType(result);
+    (result as any).ui_action_type = ui_action_type;
+
+    if (ui_action_type === "offer") {
+      result = sanitizeOfferOutput(result, language);
+    }
+
+
     const { bucket, category } = mapOutputToBucket(result);
 
-    const ui_action_type = deriveUiActionType(result);
-
-    return res.status(200).json({ ...result, ui_action_type, bucket, category });
+    return res.status(200).json({ ...result, bucket, category });
   } catch (err: any) {
     if (err?.message === "OpenAI request timed out") {
       return res.status(504).json({ error: "The analysis took too long. Please try again." });
@@ -283,4 +372,6 @@ try {
     return res.status(500).json({ error: err?.message || "Server error" });
   }
 }
+
+
 

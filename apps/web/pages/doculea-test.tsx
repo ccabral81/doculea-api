@@ -1,6 +1,6 @@
 "use client";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ocrInBrowser, isOcrTextUsable } from "@/ocr/browserOcr";
+import { ocrInBrowser, isOcrTextUsable, cleanOcrText } from "@/ocr/browserOcr";
 
 type Lang = "en" | "es";
 type Step = "idle" | "preparing" | "ocr" | "analyzing" | "done" | "error";
@@ -368,6 +368,46 @@ async function readResponseBody(resp: Response): Promise<{ json: any | null; tex
   }
 }
 
+
+
+function buildSummaryPrefix(result: any, lang: Lang): string {
+  const status = result?.legitimacy_assessment?.status;
+  const actionType = result?.ui_action_type;
+
+  if (status === "suspicious") {
+    return lang === "es"
+      ? "⚠️ Este documento parece sospechoso. Ten cuidado. "
+      : "⚠️ This document appears suspicious. Proceed with caution. ";
+  }
+
+  if (actionType === "action_required") {
+    return lang === "es"
+      ? "📌 Este documento requiere que tomes acción. "
+      : "📌 This document requires you to take action. ";
+  }
+
+  if (actionType === "offer") {
+    return lang === "es"
+      ? "ℹ️ Este documento parece ser una oferta. No es necesario que tomes acción. "
+      : "ℹ️ This document appears to be an offer. No action is required. ";
+  }
+
+  if (status === "unclear") {
+    return lang === "es"
+      ? "ℹ️ No está completamente claro. Te doy los mejores pasos posibles. "
+      : "ℹ️ It’s not completely clear. Here are the best next steps. ";
+  }
+
+  return "";
+}
+
+function statusSpokenLine(step: Step, lang: Lang) {
+  if (step === "preparing") return lang === "es" ? "Preparando la foto." : "Preparing the photo.";
+  if (step === "ocr") return lang === "es" ? "Leyendo el texto." : "Reading the text.";
+  if (step === "analyzing") return lang === "es" ? "Entendiendo el documento." : "Understanding the document.";
+  return "";
+}
+
 export default function DoculeaTestPage() {
   const [lang, setLang] = useState<Lang>("es");
   const [showLangOnboarding, setShowLangOnboarding] = useState(false);
@@ -381,6 +421,7 @@ export default function DoculeaTestPage() {
   const [step, setStep] = useState<Step>("idle");
   const [extractedText, setExtractedText] = useState<string | null>(null);
   const [showExtracted, setShowExtracted] = useState(false);
+  const [ocrWarning, setOcrWarning] = useState<string | null>(null);
 
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
   const libraryInputRef = useRef<HTMLInputElement | null>(null);
@@ -392,40 +433,6 @@ export default function DoculeaTestPage() {
   const lastPhotoRef = useRef<File | null>(null);
   const lastModeRef = useRef<"photo" | "text">("photo");
   const [onboardingSpeakOn, setOnboardingSpeakOn] = useState(true);
-
-function buildSummaryPrefix(result: any, lang: Lang): string {
-  const status = result?.legitimacy_assessment?.status as string | undefined;
-  const actionType = result?.ui_action_type as string | undefined;
-
-  if (status === "suspicious") {
-    return lang === "es"
-      ? "⚠️ Este documento parece sospechoso. Ten cuidado. "
-      : "⚠️ This document appears suspicious. Proceed with caution. ";
-  }
-  if (status === "unclear") {
-    return lang === "es"
-      ? "⚠️ No está claro si este documento es legítimo. Verifica con cuidado. "
-      : "⚠️ It’s unclear if this document is legit. Verify carefully. ";
-  }
-  if (status === "likely_legit") {
-    // keep it short; don't overpromise
-    // We'll still rely on the full analysis below.
-  }
-
-  if (actionType === "action_required") {
-    return lang === "es"
-      ? "📌 Este documento requiere que tomes acción. "
-      : "📌 This document requires you to take action. ";
-  }
-
-  if (actionType === "offer") {
-    return lang === "es"
-      ? "ℹ️ Este documento parece ser una oferta o promoción. No es necesario que tomes acción. "
-      : "ℹ️ This document appears to be an offer or promotion. No action is required. ";
-  }
-
-  return "";
-}
 
 function onboardingVoiceLine(l: Lang) {
   return l === "es"
@@ -471,11 +478,27 @@ function onboardingVoiceLine(l: Lang) {
   const canAnalyze = useMemo(() => text.trim().length >= 20, [text]);
   const loading = step === "preparing" || step === "ocr" || step === "analyzing";
 
+  const lastSpokenStepRef = useRef<Step | null>(null);
+
+  useEffect(() => {
+    if (!speakOn) return;
+    if (step !== "preparing" && step !== "ocr" && step !== "analyzing") return;
+
+    if (lastSpokenStepRef.current === step) return;
+    lastSpokenStepRef.current = step;
+
+    // iPhone Safari: speaking here helps user know progress even if they aren't watching the screen.
+    const line = statusSpokenLine(step, lang);
+    if (line) speak(line, lang);
+  }, [step, speakOn, lang]);
+
+
   async function runFromText() {
     lastModeRef.current = "text";
     setError(null);
     setResult(null);
     setExtractedText(null);
+    setOcrWarning(null);
     setStep("analyzing");
 
     try {
@@ -504,8 +527,8 @@ function onboardingVoiceLine(l: Lang) {
       setStep("done");
 
       if (speakOn && json?.plain_language_summary) {
-      const spoken = withFollowStepsSuffix(buildSummaryPrefix(json, lang) + String(json.plain_language_summary || ""), lang);
-        speak(spoken, lang);
+      const spoken = withFollowStepsSuffix(String(json.plain_language_summary || ""), lang);
+      speak(spoken, lang);
       }
 
     } catch (e: any) {
@@ -526,6 +549,7 @@ function onboardingVoiceLine(l: Lang) {
     setError(null);
     setResult(null);
     setExtractedText(null);
+    setOcrWarning(null);
 
     let finalFile = f;
     try {
@@ -563,6 +587,7 @@ function onboardingVoiceLine(l: Lang) {
     setError(null);
     setResult(null);
     setExtractedText(null);
+    setOcrWarning(null);
 
     setStep("preparing");
     const normalized = await normalizeToJpegIfHeic(file);
@@ -572,25 +597,32 @@ function onboardingVoiceLine(l: Lang) {
     const ocrText = await ocrInBrowser(normalized, language);
     setExtractedText(ocrText);
 
-    const q = isOcrTextUsable(ocrText);
-    if (!q.ok) {
+    const q = isOcrTextUsable(ocrText, language);
+
+    if (q.level === "fail") {
       setStep("error");
       const msg =
         language === "es"
-          ? `${t(language, "weakOcrTitle")} (caracteres=${q.charCount}, palabras=${q.wordCount}, frases=${q.phraseCount}, líneas=${q.lineCount}).
-
-${t(language, "weakOcrBody")}`
-          : `${t(language, "weakOcrTitle")} (chars=${q.charCount}, words=${q.wordCount}, phrases=${q.phraseCount}, lines=${q.lineCount}).
-
-${t(language, "weakOcrBody")}`;
+          ? `${t(language, "weakOcrTitle")} (caracteres=${q.charCount}, palabras=${q.wordCount}, frases=${q.phraseCount}, líneas=${q.lineCount}).\n\n${t(language, "weakOcrBody")}`
+          : `${t(language, "weakOcrTitle")} (chars=${q.charCount}, words=${q.wordCount}, phrases=${q.phraseCount}, lines=${q.lineCount}).\n\n${t(language, "weakOcrBody")}`;
       throw new Error(msg);
     }
+
+    if (q.level === "warn") {
+      const warnMsg =
+        language === "es"
+          ? `OCR incompleto: (caracteres=${q.charCount}, palabras=${q.wordCount}, frases=${q.phraseCount}, líneas=${q.lineCount}). Responderemos con lo mejor disponible.`
+          : `OCR may be incomplete: (chars=${q.charCount}, words=${q.wordCount}, phrases=${q.phraseCount}, lines=${q.lineCount}). We will respond with the best available info.`;
+      setOcrWarning(warnMsg);
+    }
+
+    const cleaned = cleanOcrText(ocrText).trim();
 
     setStep("analyzing");
     const resp = await fetch("/api/doculea/analyze", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: ocrText.trim(), language }),
+      body: JSON.stringify({ text: cleaned, language }),
     });
 
     const { json, text: rawText } = await readResponseBody(resp);
@@ -612,7 +644,7 @@ ${t(language, "weakOcrBody")}`;
     setStep("done");
 
     if (speakOn && json?.plain_language_summary) {
-      const spoken = withFollowStepsSuffix(buildSummaryPrefix(json, language) + String(json.plain_language_summary || ""), language);
+      const spoken = withFollowStepsSuffix(String(json.plain_language_summary || ""), language);
       speak(spoken, language);
     }
 
@@ -679,7 +711,7 @@ ${t(language, "weakOcrBody")}`;
   const repeatSpeaking = () => {
     const s = String(result?.plain_language_summary || "");
     if (!s) return;
-    speak(withFollowStepsSuffix(buildSummaryPrefix(result, lang) + s, lang), lang);
+    speak(withFollowStepsSuffix(s, lang), lang);
      };
 
   return (
@@ -875,6 +907,22 @@ ${t(language, "weakOcrBody")}`;
 
           <ProgressBar step={step} lang={lang} />
 
+          {ocrWarning && (
+            <div
+              style={{
+                marginTop: 12,
+                background: "#fffbeb",
+                border: "1px solid #fde68a",
+                color: "#92400e",
+                padding: 12,
+                borderRadius: 12,
+                whiteSpace: "pre-wrap",
+              }}
+            >
+              <strong>{lang === "es" ? "Aviso:" : "Warning:"}</strong> {ocrWarning}
+            </div>
+          )}
+
           {/* Speech controls */}
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10, alignItems: "center" }}>
             <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 800, color: "#111827" }}>
@@ -1050,7 +1098,7 @@ ${t(language, "weakOcrBody")}`;
               <div style={{ marginTop: 12, color: "#111827" }}>
                 <div style={{ fontWeight: 900, fontSize: 16 }}>{t(lang, "summary")}</div>
                 <div style={{ marginTop: 6 }}>
-                  {withFollowStepsSuffix(buildSummaryPrefix(result, lang) + String(result.plain_language_summary || ""), lang)}
+                  {withFollowStepsSuffix(String(result.plain_language_summary || ""), lang)}
                   </div>
               </div>
 
@@ -1099,3 +1147,4 @@ ${t(language, "weakOcrBody")}`;
     </div>
   );
 }
+
