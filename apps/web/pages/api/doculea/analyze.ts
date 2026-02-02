@@ -3,7 +3,7 @@ import OpenAI from "openai";
 
 import { DOCULEA_SYSTEM_PROMPT, buildDoculeaUserPrompt } from "../../../../../packages/core/src/prompts/doculeaPrompts";
 import { DoculeaResponseSchema, DoculeaResponse } from "../../../../../packages/core/src/schema/doculeaSchema";
-import { applyHardSafetyOverride, applyEcommerceNormalizationOverride } from "../../../../../packages/core/src/safety/doculeaSafety";
+import { applyHardSafetyOverride, applyEcommerceNormalizationOverride, applyGovernmentSolicitationOverride, } from "../../../../../packages/core/src/safety/doculeaSafety";
 import { mapOutputToBucket } from "../../../../../packages/core/src/mapping/bucketMap";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -165,6 +165,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // Normalize e-commerce order confirmations (avoid inconsistent scam labeling)
     result = applyEcommerceNormalizationOverride(result, trimmedText, language);
+
+    result = applyGovernmentSolicitationOverride(result, trimmedText, language);
 
     const { bucket, category } = mapOutputToBucket(result);
 
