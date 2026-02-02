@@ -3,7 +3,7 @@ import OpenAI from "openai";
 
 import { DOCULEA_SYSTEM_PROMPT, buildDoculeaUserPrompt } from "../../../../../packages/core/src/prompts/doculeaPrompts";
 import { DoculeaResponseSchema, DoculeaResponse } from "../../../../../packages/core/src/schema/doculeaSchema";
-import { applyHardSafetyOverride, applyEcommerceNormalizationOverride, applyGovernmentSolicitationOverride, } from "../../../../../packages/core/src/safety/doculeaSafety";
+import { applyHardSafetyOverride, applyGovernmentSolicitationOverride, applyEcommerceNormalizationOverride, applyIntentAndPressureOverride } from "../../../../../packages/core/src/safety/doculeaSafety";
 import { mapOutputToBucket } from "../../../../../packages/core/src/mapping/bucketMap";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -163,12 +163,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Apply hard safety overrides (use original text for scam signals)
     result = applyHardSafetyOverride(result, trimmedText, language);
 
-    // Normalize e-commerce order confirmations (avoid inconsistent scam labeling)
-    result = applyEcommerceNormalizationOverride(result, trimmedText, language);
+    
 
+    
+
+    // Government-like solicitations (e.g., NJ annual report private filing services)
     result = applyGovernmentSolicitationOverride(result, trimmedText, language);
 
-    const { bucket, category } = mapOutputToBucket(result);
+    // E-commerce order confirmations (e.g., Temu) should be informational by default
+    result = applyEcommerceNormalizationOverride(result, trimmedText, language);
+
+    // Offers vs obligations vs manipulative solicitations (pressure language guardrails)
+    result = applyIntentAndPressureOverride(result, trimmedText, language);
+const { bucket, category } = mapOutputToBucket(result);
 
     return res.status(200).json({ ...result, bucket, category });
   } catch (err: any) {

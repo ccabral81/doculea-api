@@ -23,339 +23,7 @@ export function hasHardScamSignals(text: string): boolean {
     "one-time code",
     "otp",
   ];
-  return patterns.some(p => t.includes(p));
-}
-
-
-/**
- * E-commerce / order confirmation normalization.
- * Goal: prevent inconsistent "scam" labeling for normal order confirmations when OCR is partial.
- * This runs AFTER hard-scam override and can downshift suspicious -> unclear when appropriate.
- */
-function looksLikeOrderConfirmation(text: string): boolean {
-  const t = (text || "").toLowerCase();
-
-  // Core order confirmation signals (ES/EN)
-  const orderSignals = [
-    "pedido confirmado",
-    "confirmación de tu pedido",
-    "confirmacion de tu pedido",
-    "tu compra está confirmada",
-    "tu compra esta confirmada",
-    "order confirmed",
-    "order confirmation",
-    "your order is confirmed",
-    "purchase confirmed",
-    "pedido 1 de",
-    "tracking",
-    "envío",
-    "enviado",
-    "shipping",
-  ];
-
-  // Merchant hints (expand over time; start small)
-  const merchantHints = [
-    "temu",
-    "amazon",
-    "walmart",
-    "shein",
-    "aliexpress",
-    "ebay",
-    "etsy",
-    "target",
-  ];
-
-  const hasOrder = orderSignals.some((p) => t.includes(p));
-  const hasMerchant = merchantHints.some((m) => t.includes(m));
-  return hasOrder && hasMerchant;
-}
-
-function hasPhishingEscalationSignals(text: string): boolean {
-  const t = (text || "").toLowerCase();
-
-  // Signals that commonly indicate phishing / credential harvesting / payment fraud
-  const patterns = [
-    "verify your account",
-    "confirm your account",
-    "confirm your password",
-    "reset password",
-    "password reset",
-    "log in",
-    "login",
-    "sign in",
-    "update payment",
-    "payment method",
-    "billing information",
-    "your account will be suspended",
-    "account suspended",
-    "unauthorized purchase",
-    "suspicious activity",
-    "urgent action required",
-    "act now",
-
-    // Spanish
-    "verifica tu cuenta",
-    "verificar tu cuenta",
-    "confirma tu cuenta",
-    "restablecer contraseña",
-    "cambiar contraseña",
-    "iniciar sesión",
-    "inicia sesión",
-    "actualiza tu pago",
-    "método de pago",
-    "metodo de pago",
-    "información de facturación",
-    "informacion de facturacion",
-    "tu cuenta será suspendida",
-    "tu cuenta sera suspendida",
-    "actividad sospechosa",
-    "compra no autorizada",
-    "acción urgente",
-    "accion urgente",
-  ];
-  // Treat "click here" as escalation ONLY when paired with account/payment/credential language.
-  const clickHere = /(click here|haga clic|haz clic|presiona aquí|presione aquí)/i.test(text);
-  const clickContext = /(account|cuenta|password|contrase|login|iniciar sesi|sign in|payment|pago|billing|factur|verify your account|verifica tu cuenta)/i.test(
-    text
-  );
-
-  return patterns.some((p) => t.includes(p)) || (clickHere && clickContext);
-}
-
-function hasSenderOrDomainHint(text: string): boolean {
-  const t = (text || "").toLowerCase();
-  // Lightweight: if OCR captured a clear domain line, we consider it stronger.
-  return (
-    /\b(transaction\.|order\.|mail\.|notifications\.|no-reply\.)/.test(t) ||
-    /\btemu\.com\b/.test(t) ||
-    /\bamazon\.com\b/.test(t) ||
-    /\bwalmart\.com\b/.test(t) ||
-    /\bshein\.com\b/.test(t)
-  );
-}
-
-/**
- * Applies deterministic normalization for order confirmations:
- * - If it looks like an order confirmation AND no phishing escalation signals:
- *   - Ensure NOT labeled as scam/suspicious.
- *   - Prefer likely_legit when sender/domain hint exists, otherwise unclear.
- *   - Remove scripts (no calling / emailing merchants based on an email screenshot).
- */
-export function applyEcommerceNormalizationOverride(
-  result: DoculeaResponse,
-  rawText: string,
-  language: "en" | "es"
-): DoculeaResponse {
-  const combined = (rawText || "").toString();
-  if (!looksLikeOrderConfirmation(combined)) return result;
-
-  // If hard scam override already triggered (e.g., gift cards, crypto, etc.), do not soften it.
-  // (Those cases are not normal order confirmations.)
-  if (result?.document_type?.category === "scam" && result?.legitimacy_assessment?.status === "suspicious") {
-    if (hasHardScamSignals(combined) || hasPhishingEscalationSignals(combined)) return result;
-  }
-
-  const escalation = hasPhishingEscalationSignals(combined);
-  if (escalation) return result; // let suspicious stand when escalation signals exist
-
-  const stronger = hasSenderOrDomainHint(combined);
-
-  const next = { ...result };
-
-  // Ensure category is not "scam" for normal confirmations
-  if (next?.document_type?.category === "scam") {
-    next.document_type = { category: "informational", confidence: "medium" };
-  }
-
-  // Legitimacy: likely_legit if we have sender/domain, else unclear (missing OCR signals)
-  next.legitimacy_assessment = {
-    status: stronger ? "likely_legit" : "unclear",
-    confidence: stronger ? "medium" : "medium",
-    summary_reason:
-      language === "es"
-        ? stronger
-          ? "Parece una confirmación normal de pedido de una plataforma conocida. No se observan señales claras de phishing en el texto detectado."
-          : "Parece una confirmación de pedido, pero el texto detectado no incluye suficiente información del remitente. Verifica dentro de la app/sitio oficial."
-        : stronger
-          ? "This looks like a normal order confirmation from a known platform. No clear phishing escalation signals were detected."
-          : "This appears to be an order confirmation, but the detected text lacks enough sender details. Verify inside the official app/site.",
-  };
-
-  // Safe steps for order confirmations (no scripts)
-  next.step_by_step_actions =
-    language === "es"
-      ? [
-          { step: 1, title: "Verifica dentro de la app o sitio oficial", description: "Abre la app oficial (o escribe la URL manualmente) y revisa tu sección de Pedidos/Órdenes.", urgency: "medium" },
-          { step: 2, title: "Si NO hiciste esta compra", description: "No hagas clic en enlaces del correo. Entra a tu cuenta por la app/sitio oficial y revisa actividad reciente. Cambia tu contraseña si ves algo extraño.", urgency: "high" },
-          { step: 3, title: "Evita enlaces si tienes dudas", description: "Si el mensaje te genera dudas, ignora enlaces/botones del correo y busca soporte desde la app o sitio oficial.", urgency: "medium" },
-        ]
-      : [
-          { step: 1, title: "Verify inside the official app or site", description: "Open the official app (or type the URL manually) and check your Orders section.", urgency: "medium" },
-          { step: 2, title: "If you did NOT place this order", description: "Do not click links in the email. Log in via the official app/site, review recent activity, and change your password if anything looks off.", urgency: "high" },
-          { step: 3, title: "Avoid links if unsure", description: "If you’re unsure, ignore email buttons/links and use support from the official app or website.", urgency: "medium" },
-        ];
-
-  // Remove scripts to avoid driving contact based on a screenshot
-  next.suggested_scripts = { call_script: "", email_template: "" };
-  next.recommended_actions = [];
-
-  // Red flags: only add when unclear or when user didn't place the order
-  if (!Array.isArray(next.red_flags)) next.red_flags = [];
-  if (!stronger) {
-    const rf =
-      language === "es"
-        ? "El remitente/dominio no se pudo confirmar con el texto detectado. Verifica el pedido directamente en la app o sitio oficial."
-        : "Sender/domain could not be confirmed from the detected text. Verify the order directly in the official app or website.";
-    if (!next.red_flags.includes(rf)) next.red_flags.unshift(rf);
-  }
-
-  // Safety notes: gentle, not scary
-  const note =
-    language === "es"
-      ? "Consejo: Si tienes dudas, no uses enlaces del correo. Entra a la app o escribe la URL manualmente."
-      : "Tip: If you’re unsure, don’t use email links. Open the app or type the URL manually.";
-  next.safety_notes = next.safety_notes ? `${next.safety_notes}\n\n${note}` : note;
-
-  return next;
-}
-
-
-/**
- * Government-like solicitations that mimic official notices (example: NJ annual report solicitation).
- * These are often NOT from the government, even if they reference state fees.
- *
- * Rule:
- *  - If document is classified as government AND text contains strong solicitation fingerprints,
- *    force status to suspicious (high) and replace steps with "verify & file directly".
- */
-function looksLikeNjAnnualReportSolicitation(text: string): boolean {
-  const t = (text || "").toLowerCase();
-
-  const signals = [
-    "annual report compliance",
-    "annualrcompliance.org",
-    "make checks payable to",
-    "service fee",
-    "order total",
-    "princeton, nj 08542",
-    "nassau street",
-    "po box",
-  ];
-
-  const hits = signals.reduce((acc, s) => (t.includes(s) ? acc + 1 : acc), 0);
-
-  const has75 = /\$?\s?75\b/.test(t);
-  const has170 = /\$?\s?170\b/.test(t);
-  const hasServiceFee = t.includes("service fee");
-
-  return hits >= 2 || (has75 && has170 && hasServiceFee);
-}
-
-export function applyGovernmentSolicitationOverride(
-  result: DoculeaResponse,
-  rawText: string,
-  language: "en" | "es"
-): DoculeaResponse {
-  const combined = String(rawText || "");
-  const category = (result as any)?.document_type?.category;
-
-  // Only apply to government-ish classification
-  if (category !== "government") return result;
-
-  if (!looksLikeNjAnnualReportSolicitation(combined)) return result;
-
-  const next: any = { ...(result as any) };
-
-  next.legitimacy_assessment = {
-    status: "suspicious",
-    confidence: "high",
-    summary_reason:
-      language === "es"
-        ? "Este aviso parece ser una solicitud de una empresa privada que ofrece presentar el informe anual cobrando una tarifa adicional. No parece ser un aviso oficial del estado."
-        : "This appears to be a third-party solicitation offering to file your annual report for an extra fee; it does not appear to be an official state notice.",
-  };
-
-  // Ensure this reads like a solicitation, not an official mandate to pay them.
-  const suffix =
-    language === "es"
-      ? " Puedes presentar el informe anual directamente con el Estado de Nueva Jersey por un costo menor."
-      : " You can file the annual report directly with the State of New Jersey for a lower cost.";
-
-  if (typeof next.plain_language_summary === "string") {
-    if (!next.plain_language_summary.includes(suffix.trim())) {
-      next.plain_language_summary = next.plain_language_summary.trim() + suffix;
-    }
-  }
-
-  next.what_this_means_for_you =
-    language === "es"
-      ? "El requisito del informe anual puede ser real, pero este aviso parece ser de una empresa privada que cobra una tarifa adicional para hacerlo por ti. Verifica en el portal oficial del estado y presenta directamente si corresponde."
-      : "The annual report requirement may be real, but this notice appears to be from a private company charging an extra service fee. Verify on the official state portal and file directly if needed.";
-
-  next.step_by_step_actions =
-    language === "es"
-      ? [
-          {
-            step: 1,
-            title: "No pagues este aviso",
-            description:
-              "Este documento parece ser una solicitud de una empresa privada. No envíes pago hasta verificar en el sitio oficial del estado.",
-            urgency: "high",
-          },
-          {
-            step: 2,
-            title: "Verifica en el portal oficial",
-            description:
-              "Busca el portal oficial del Estado de NJ para confirmar si tu informe anual está pendiente y el costo oficial.",
-            urgency: "high",
-          },
-          {
-            step: 3,
-            title: "Presenta directamente si corresponde",
-            description:
-              "Si está pendiente, presenta el informe anual directamente con el estado para evitar tarifas extra.",
-            urgency: "medium",
-          },
-        ]
-      : [
-          {
-            step: 1,
-            title: "Do not pay this notice",
-            description:
-              "This appears to be a private solicitation. Don’t send payment until you verify on the official state site.",
-            urgency: "high",
-          },
-          {
-            step: 2,
-            title: "Verify on the official state portal",
-            description:
-              "Use the official NJ state portal to confirm whether your annual report is due and the official fee.",
-            urgency: "high",
-          },
-          {
-            step: 3,
-            title: "File directly if needed",
-            description:
-              "If it’s due, file directly with the state to avoid unnecessary service fees.",
-            urgency: "medium",
-          },
-        ];
-
-  // No scripts for solicitations
-  next.suggested_scripts = { call_script: null, email_template: null };
-
-  next.red_flags = [
-    ...(Array.isArray(next.red_flags) ? next.red_flags : []),
-    language === "es" ? "Incluye una tarifa de servicio adicional." : "Includes an extra service fee.",
-    language === "es" ? "El remitente parece ser una empresa privada, no el estado." : "Sender appears to be a private company, not the state.",
-  ];
-
-  next.safety_notes =
-    language === "es"
-      ? "No envíes pagos ni información sensible usando los datos de este aviso. Verifica siempre con el portal oficial del estado."
-      : "Do not send payment or sensitive info using the details on this notice. Always verify via the official state portal.";
-
-  return next as DoculeaResponse;
+  return patterns.some((p) => t.includes(p));
 }
 
 /**
@@ -368,29 +36,577 @@ export function applyHardSafetyOverride(
   rawText: string,
   language: "en" | "es"
 ): DoculeaResponse {
-  // If no hard scam signals, return result untouched
-  if (!hasHardScamSignals(rawText)) {
-    return result;
-  }
+  if (!hasHardScamSignals(rawText)) return result;
 
-  // Force scam classification if hard signals exist
+  // Override to scam, suspicious, strong safety steps
   return {
-    ...result,
-    document_type: {
-      category: "scam",
-      confidence: "high",
-    },
+    ...(result as any),
+    document_type: { category: "scam", confidence: "high" },
     legitimacy_assessment: {
       status: "suspicious",
       confidence: "high",
       summary_reason:
         language === "es"
-          ? "El documento contiene señales claras de estafa, como solicitudes de pago inusuales o amenazas."
-          : "The document contains strong scam indicators such as unusual payment requests or threats.",
+          ? "Este documento contiene señales fuertes de estafa (por ejemplo: amenazas, solicitud de pagos inusuales, o presión)."
+          : "This document contains strong scam indicators (e.g., threats, unusual payment requests, or pressure).",
     },
+    what_this_means_for_you:
+      language === "es"
+        ? "Podría tratarse de una estafa. No compartas información personal ni realices pagos. Verifica por canales oficiales."
+        : "This may be a scam. Do not share personal information or make payments. Verify via official channels.",
+    step_by_step_actions: [
+      {
+        step: 1,
+        title: language === "es" ? "No pagues ni respondas" : "Do not pay or respond",
+        description:
+          language === "es"
+            ? "No envíes dinero, tarjetas de regalo ni criptomonedas. No respondas al mensaje."
+            : "Do not send money, gift cards, or crypto. Do not respond to the message.",
+        urgency: "high",
+      },
+      {
+        step: 2,
+        title: language === "es" ? "Verifica por tu cuenta" : "Verify independently",
+        description:
+          language === "es"
+            ? "Si crees que podría ser real, busca el número oficial en el sitio web de la institución (no uses el número del documento)."
+            : "If you think it could be real, find the official number on the institution’s website (don’t use the number in the document).",
+        urgency: "high",
+      },
+      {
+        step: 3,
+        title: language === "es" ? "Reporta si es necesario" : "Report if needed",
+        description:
+          language === "es"
+            ? "Si confirmas que es sospechoso, repórtalo a tu proveedor (banco, email) o a autoridades/consumidor."
+            : "If confirmed suspicious, report it to your provider (bank/email) or consumer authorities.",
+        urgency: "medium",
+      },
+    ],
+    recommended_actions: [],
+    red_flags: [
+      language === "es" ? "Solicitud de pagos inusuales (tarjetas de regalo/cripto)." : "Unusual payment request (gift cards/crypto).",
+      language === "es" ? "Lenguaje de amenazas o urgencia extrema." : "Threatening or extremely urgent language.",
+    ],
+    suggested_scripts: { call_script: null, email_template: null },
     safety_notes:
       language === "es"
         ? "No realice pagos, no comparta información personal y no responda a este mensaje."
         : "Do not make payments, do not share personal information, and do not respond to this message.",
+  } as DoculeaResponse;
+}
+
+// ---------------- Government-like solicitations (NJ Annual Report style) ----------------
+
+function looksLikeNjAnnualReportSolicitation(text: string): boolean {
+  const t = (text || "").toLowerCase();
+
+  const mustHave = ["annual report", "new jersey"];
+  const signals = [
+    "annual report compliance",
+    "service fee",
+    "order total",
+    "make checks payable",
+    "processing fee",
+    "notice sent date",
+    "respond by",
+    "reference id",
+    "princeton",
+    "nassau street",
+    "box",
+  ];
+
+  const hasMust = mustHave.every((m) => t.includes(m));
+  const sigCount = signals.reduce((acc, s) => acc + (t.includes(s) ? 1 : 0), 0);
+
+  return hasMust && sigCount >= 3;
+}
+
+/**
+ * Re-labels NJ annual report solicitations as suspicious (non-official),
+ * and prevents “pay this notice” behavior.
+ */
+export function applyGovernmentSolicitationOverride(
+  result: DoculeaResponse,
+  rawText: string,
+  language: "en" | "es"
+): DoculeaResponse {
+  const cat = (result as any)?.document_type?.category;
+  if (cat !== "government") return result;
+
+  if (!looksLikeNjAnnualReportSolicitation(rawText)) return result;
+
+  const next: any = { ...(result as any) };
+
+  next.legitimacy_assessment = {
+    status: "suspicious",
+    confidence: "high",
+    summary_reason:
+      language === "es"
+        ? "Este aviso parece ser una solicitud de una empresa privada que ofrece presentar el informe anual cobrando una tarifa adicional. No parece ser un aviso oficial del estado."
+        : "This appears to be a private-company solicitation offering to file an annual report for an extra fee. It does not appear to be an official state notice.",
   };
+
+  next.plain_language_summary =
+    language === "es"
+      ? "Este documento parece una solicitud (no oficial) para pagar por un servicio de presentación del informe anual. El informe anual puede existir, pero normalmente puedes presentarlo directamente en el portal oficial del estado por un costo menor."
+      : "This appears to be a non-official solicitation to pay for an annual report filing service. The annual report may be real, but you can usually file directly on the state’s official portal for less.";
+
+  next.what_this_means_for_you =
+    language === "es"
+      ? "No pagues este aviso sin verificar. Es probable que sea un servicio privado que se presenta como “oficial”. Verifica tu estatus en el portal oficial del estado y presenta allí si corresponde."
+      : "Do not pay this notice without verifying. It’s likely a private service that looks ‘official’. Verify your status on the official state portal and file there if needed.";
+
+  next.step_by_step_actions = [
+    {
+      step: 1,
+      title: language === "es" ? "No pagues este aviso" : "Do not pay this notice",
+      description:
+        language === "es"
+          ? "Evita enviar cheques o pagos a esta entidad hasta verificar si es oficial."
+          : "Avoid sending checks/payments to this entity until you verify it’s official.",
+      urgency: "high",
+    },
+    {
+      step: 2,
+      title: language === "es" ? "Verifica en el sitio oficial" : "Verify on the official site",
+      description:
+        language === "es"
+          ? "Busca el portal oficial de Nueva Jersey para confirmar si tu informe anual está pendiente y cuál es la tarifa oficial."
+          : "Use New Jersey’s official portal to confirm if your annual report is due and what the official fee is.",
+      urgency: "high",
+    },
+    {
+      step: 3,
+      title: language === "es" ? "Presenta directamente (si aplica)" : "File directly (if needed)",
+      description:
+        language === "es"
+          ? "Si está pendiente, presenta el informe en el portal oficial. Si necesitas ayuda, busca un contador/abogado por tu cuenta."
+          : "If due, file through the official portal. If you need help, choose an accountant/lawyer independently.",
+      urgency: "medium",
+    },
+  ];
+
+  next.red_flags = Array.isArray(next.red_flags) ? next.red_flags : [];
+  const rfs =
+    language === "es"
+      ? [
+          "Parece oficial, pero puede ser una empresa privada.",
+          "Incluye una 'service fee' además de la tarifa estatal.",
+        ]
+      : [
+          "Looks official but may be a private company.",
+          "Includes a 'service fee' on top of the state fee.",
+        ];
+  for (const r of rfs) if (!next.red_flags.includes(r)) next.red_flags.push(r);
+
+  next.suggested_scripts = { call_script: null, email_template: null };
+  next.safety_notes =
+    language === "es"
+      ? "No uses el número/email del aviso para verificar. Busca el portal oficial del estado y verifica allí."
+      : "Do not use the notice’s number/email to verify. Use the state’s official portal to confirm status.";
+
+  return next as DoculeaResponse;
+}
+
+// ---------------- E-commerce / order confirmation normalization ----------------
+
+function looksLikeEcommerceOrderConfirmation(text: string): boolean {
+  const t = (text || "").toLowerCase();
+  const brandSignals = ["temu", "amazon", "walmart", "target", "shein", "aliexpress", "order confirmed", "pedido confirmado", "tracking"];
+  const purchaseSignals = ["your purchase", "tu compra", "shipping", "envío", "address", "dirección", "order", "pedido"];
+  const a = brandSignals.some((s) => t.includes(s));
+  const b = purchaseSignals.some((s) => t.includes(s));
+  return a && b;
+}
+
+/**
+ * If it’s clearly an order confirmation, do NOT treat as scam/offer funnel by default.
+ * Keep it informational and advise verifying inside the official app/site.
+ */
+export function applyEcommerceNormalizationOverride(
+  result: DoculeaResponse,
+  rawText: string,
+  language: "en" | "es"
+): DoculeaResponse {
+  if (!looksLikeEcommerceOrderConfirmation(rawText)) return result;
+
+  const next: any = { ...(result as any) };
+
+  next.document_type = { category: "informational", confidence: "high" };
+  next.legitimacy_assessment = {
+    status: "likely_legit",
+    confidence: "medium",
+    summary_reason:
+      language === "es"
+        ? "Parece una confirmación de pedido de una plataforma conocida. Aun así, verifica dentro de la app/sitio oficial."
+        : "This looks like an order confirmation from a known platform. Still, verify inside the official app/site.",
+  };
+
+  next.step_by_step_actions = [
+    {
+      step: 1,
+      title: language === "es" ? "Verifica en la app/sitio oficial" : "Verify in the official app/site",
+      description:
+        language === "es"
+          ? "Abre la app o el sitio oficial (por tu cuenta) y confirma que el pedido aparece en tu cuenta."
+          : "Open the official app/site (independently) and confirm the order appears in your account.",
+      urgency: "medium",
+    },
+    {
+      step: 2,
+      title: language === "es" ? "Revisa la dirección y el envío" : "Check address and shipping",
+      description:
+        language === "es"
+          ? "Confirma dirección, artículos y fechas estimadas. Si no reconoces el pedido, cambia tu contraseña."
+          : "Confirm address, items, and estimated dates. If you don’t recognize it, change your password.",
+      urgency: "medium",
+    },
+    {
+      step: 3,
+      title: language === "es" ? "Evita enlaces sospechosos" : "Avoid suspicious links",
+      description:
+        language === "es"
+          ? "Si el email tiene enlaces raros, no hagas clic. Entra por la app/sitio oficial."
+          : "If the email has odd links, don’t click. Use the official app/site.",
+      urgency: "low",
+    },
+  ];
+
+  next.suggested_scripts = { call_script: null, email_template: null };
+  next.red_flags = Array.isArray(next.red_flags) ? next.red_flags : [];
+  next.safety_notes =
+    language === "es"
+      ? "Verifica siempre desde la app/sitio oficial. Si no reconoces el pedido, revisa tu cuenta y métodos de pago."
+      : "Always verify from the official app/site. If you don’t recognize the order, review your account and payment methods.";
+
+  return next as DoculeaResponse;
+}
+
+// ---------------- Intent + Pressure layer (offers vs obligations vs manipulative solicitations) ----------------
+
+type IntentMode = "required_obligation" | "optional_offer" | "informational_notice" | "manipulative_solicitation" | "unknown";
+
+function normalizeText(t: string) {
+  return (t || "").toLowerCase();
+}
+
+function countMatches(haystack: string, needles: string[]): number {
+  let c = 0;
+  for (const n of needles) if (haystack.includes(n)) c++;
+  return c;
+}
+
+function hasAny(haystack: string, needles: string[]): boolean {
+  for (const n of needles) if (haystack.includes(n)) return true;
+  return false;
+}
+
+function pressureScore(t: string): number {
+  const s = normalizeText(t);
+  const pressure = [
+    "final notice",
+    "immediate response",
+    "urgent",
+    "act now",
+    "last day",
+    "deadline",
+    "expires",
+    "expire date",
+    "too late",
+    "penalty",
+    "lapse of coverage",
+    "financial liable",
+    "liability",
+    "we reserve the right",
+    "required",
+    "must call",
+    "call today",
+    "respond by",
+    // Spanish
+    "aviso final",
+    "respuesta inmediata",
+    "urgente",
+    "actúe ahora",
+    "ultimo dia",
+    "último día",
+    "fecha límite",
+    "vence",
+    "expira",
+    "demasiado tarde",
+    "multa",
+    "penalidad",
+    "responsable",
+    "debe llamar",
+    "llame hoy",
+    "responda antes de",
+  ];
+  return countMatches(s, pressure);
+}
+
+function offerScore(t: string): number {
+  const s = normalizeText(t);
+  const offer = [
+    "offer",
+    "promotion",
+    "enroll",
+    "enrollment",
+    "sign up",
+    "register",
+    "optional",
+    "program",
+    "benefits",
+    "terms and conditions",
+    "apply now",
+    "credit card",
+    "reward",
+    "cash back",
+    // Utility supplier / switching / refund funnel
+    "third party supplier",
+    "not affiliated",
+    "electricity supplier",
+    "supply charges",
+    "remain a customer",
+    "refund id",
+    "bill credit",
+    "mail me a check",
+    "you must call",
+    // Spanish
+    "oferta",
+    "promoción",
+    "inscríbete",
+    "inscribirse",
+    "registr",
+    "opcional",
+    "programa",
+    "beneficios",
+    "términos y condiciones",
+    "solicita ahora",
+    "tarjeta de crédito",
+    "recompensas",
+    "reembolso",
+  ];
+  return countMatches(s, offer);
+}
+
+function utilitySwitchSignals(t: string): boolean {
+  const s = normalizeText(t);
+  const signals = [
+    "third party supplier",
+    "not affiliated",
+    "electricity supplier",
+    "remain a customer",
+    "refund id",
+    "bill credit",
+    "supply charges",
+    "bureau of public utilities",
+    "pse&g",
+    "pseg",
+    "choose one",
+    "mail me a check",
+    "last day to call",
+  ];
+  return countMatches(s, signals) >= 3;
+}
+
+function likelyGovOrBillCategory(cat: any): boolean {
+  return (
+    cat === "government" ||
+    cat === "utility" ||
+    cat === "medical" ||
+    cat === "bank" ||
+    cat === "credit_card" ||
+    cat === "debt_collection" ||
+    cat === "insurance"
+  );
+}
+
+/**
+ * Intent + pressure normalization. This does NOT change your locked schema.
+ * It only rewrites wording/actions to reduce harm and improve trust.
+ */
+export function applyIntentAndPressureOverride(
+  result: DoculeaResponse,
+  rawText: string,
+  language: "en" | "es"
+): DoculeaResponse {
+  const text = String(rawText || "");
+  const cat = (result as any)?.document_type?.category;
+  const status = (result as any)?.legitimacy_assessment?.status;
+
+  // If already hard-scam suspicious, do nothing here.
+  if (status === "suspicious" && hasHardScamSignals(text)) return result;
+
+  const pScore = pressureScore(text);
+  const oScore = offerScore(text);
+
+  let intent: IntentMode = "unknown";
+
+  if (cat === "informational") {
+    intent = "informational_notice";
+  } else if (utilitySwitchSignals(text)) {
+    intent = "manipulative_solicitation";
+  } else if (oScore >= 2 && pScore >= 2) {
+    intent = "manipulative_solicitation";
+  } else if (oScore >= 2 && pScore <= 1) {
+    intent = "optional_offer";
+  } else if (
+    likelyGovOrBillCategory(cat) &&
+    pScore >= 2 &&
+    hasAny(normalizeText(text), ["make checks payable", "order total", "service fee", "processing fee"])
+  ) {
+    intent = "manipulative_solicitation";
+  } else if (likelyGovOrBillCategory(cat)) {
+    intent = "required_obligation";
+  }
+
+  if (intent === "unknown") return result;
+
+  const next: any = { ...(result as any) };
+
+  const ensureRedFlags = () => {
+    if (!Array.isArray(next.red_flags)) next.red_flags = [];
+  };
+
+  const addPrefixToSummary = (prefix: string) => {
+    const s = String(next.plain_language_summary || "").trim();
+    if (!s) return;
+    if (s.toLowerCase().startsWith(prefix.toLowerCase())) return;
+    next.plain_language_summary = `${prefix} ${s}`.trim();
+  };
+
+  if (intent === "optional_offer") {
+    const prefix = language === "es" ? "Oferta opcional:" : "Optional offer:";
+    addPrefixToSummary(prefix);
+
+    const offerSafety =
+      language === "es"
+        ? "No estás obligado a inscribirte. Si te interesa, verifica detalles usando fuentes oficiales (sitio/app oficial) y evita usar enlaces/QR impresos."
+        : "You’re not required to enroll. If interested, verify details via official sources (official site/app) and avoid printed QR/links.";
+
+    if (!next.safety_notes) next.safety_notes = offerSafety;
+
+    next.step_by_step_actions = [
+      {
+        step: 1,
+        title: language === "es" ? "Revisa los detalles" : "Review the details",
+        description:
+          language === "es"
+            ? "Lee costos, condiciones y qué incluye. Esto es opcional."
+            : "Review costs, terms, and what’s included. This is optional.",
+        urgency: "low",
+      },
+      {
+        step: 2,
+        title: language === "es" ? "Verifica por tu cuenta" : "Verify independently",
+        description:
+          language === "es"
+            ? "Busca la entidad en el sitio/app oficial o canales verificados. Evita enlaces/QR impresos."
+            : "Use the official site/app or verified channels. Avoid printed QR/links.",
+        urgency: "low",
+      },
+      {
+        step: 3,
+        title: language === "es" ? "Decide si te conviene" : "Decide if it’s worth it",
+        description:
+          language === "es"
+            ? "Compara alternativas y solo continúa si realmente lo necesitas."
+            : "Compare alternatives and proceed only if you truly want it.",
+        urgency: "low",
+      },
+    ];
+
+    ensureRedFlags();
+    const rfs =
+      language === "es"
+        ? ["Es una oferta opcional: no estás obligado a inscribirte."]
+        : ["This is an optional offer: you are not required to enroll."];
+    for (const r of rfs) if (!next.red_flags.includes(r)) next.red_flags.push(r);
+
+    // Remove scripts by default for offers (avoid funneling). If you want them back later, we can add “official channels only” scripts.
+    next.suggested_scripts = { call_script: null, email_template: null };
+  }
+
+  if (intent === "manipulative_solicitation") {
+    ensureRedFlags();
+
+    next.legitimacy_assessment = {
+      status: next.legitimacy_assessment?.status === "suspicious" ? "suspicious" : "unclear",
+      confidence: "high",
+      summary_reason:
+        language === "es"
+          ? "Parece ser una solicitud/oferta opcional con lenguaje de presión (urgencia, fechas límite o amenazas). Esto puede empujarte a inscribirte o pagar sin necesidad. Verifica por canales oficiales antes de actuar."
+          : "This appears to be an optional solicitation using pressure language (urgency, deadlines, or threats). This can funnel you into signing up or paying unnecessarily. Verify via official channels before acting.",
+    };
+
+    const prefix =
+      language === "es"
+        ? "Aviso comercial (opcional) con lenguaje de presión:"
+        : "Optional solicitation with pressure language:";
+
+    addPrefixToSummary(prefix);
+
+    const rf = language === "es"
+      ? [
+          "Lenguaje de urgencia o 'aviso final'.",
+          "Plazo/fecha límite para presionarte.",
+          "Te pide llamar de inmediato o actuar sin verificación.",
+        ]
+      : [
+          "Urgent or 'final notice' language.",
+          "Deadline meant to pressure you.",
+          "Asks you to call immediately or act without verification.",
+        ];
+    for (const r of rf) if (!next.red_flags.includes(r)) next.red_flags.push(r);
+
+    next.step_by_step_actions = [
+      {
+        step: 1,
+        title: language === "es" ? "No actúes por presión" : "Don’t act due to pressure",
+        description:
+          language === "es"
+            ? "No llames ni pagues solo por esta carta/mensaje. Verifica primero."
+            : "Don’t call or pay just because of this letter/message. Verify first.",
+        urgency: "medium",
+      },
+      {
+        step: 2,
+        title: language === "es" ? "Verifica por fuentes oficiales" : "Verify via official sources",
+        description:
+          language === "es"
+            ? "Busca la entidad por tu cuenta (sitio oficial, tu cuenta, o un número verificado). Evita enlaces/QR impresos."
+            : "Look up the entity independently (official site, your account, or a verified number). Avoid printed QR/links.",
+        urgency: "medium",
+      },
+      {
+        step: 3,
+        title: language === "es" ? "Decide si lo necesitas" : "Decide if you need it",
+        description:
+          language === "es"
+            ? "Si es solo una oferta, puedes ignorarla. Si realmente aplica, continúa solo por canales oficiales."
+            : "If it’s just an offer, you can ignore it. If it truly applies, proceed only via official channels.",
+        urgency: "low",
+      },
+    ];
+
+    next.suggested_scripts = { call_script: null, email_template: null };
+
+    const s =
+      language === "es"
+        ? "Evita llamar al número o usar enlaces/QR impresos. Verifica primero en el sitio/app oficial o tu cuenta. No compartas información personal bajo presión."
+        : "Avoid calling numbers or using printed QR/links. Verify first via the official site/app or your account. Don’t share personal info under pressure.";
+
+    next.safety_notes = next.safety_notes ? String(next.safety_notes) : s;
+  }
+
+  if (intent === "required_obligation") {
+    const safePay =
+      language === "es"
+        ? "Si este documento requiere pago o acción, hazlo solo por canales oficiales (portal oficial, tu cuenta, o un número verificado). Evita pagar a terceros no oficiales."
+        : "If this requires payment or action, do it only via official channels (official portal, your account, or a verified number). Avoid paying non-official third parties.";
+
+    if (!next.safety_notes) next.safety_notes = safePay;
+  }
+
+  return next as DoculeaResponse;
 }
