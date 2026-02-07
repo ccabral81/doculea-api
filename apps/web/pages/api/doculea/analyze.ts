@@ -112,27 +112,46 @@ function looksLikeOffer(text: string) {
 
 function deriveUiActionType(result: any, rawText: string): "action_required" | "informational" | "offer" {
   const category = result?.document_type?.category;
+  const catConf = result?.document_type?.confidence; // "high" | "medium" | "low"
   const status = result?.legitimacy_assessment?.status;
 
   // If suspicious, avoid "action-required" flows; treat as informational/safety-first.
   if (status === "suspicious") return "informational";
 
+  const actionableCats = new Set([
+    "utility",
+    "medical",
+    "insurance",
+    "debt_collection",
+    "government",
+    "employment",
+    "school",
+    "legal",
+    "bank",
+    "credit_card",
+  ]);
+
+  const isActionable = actionableCats.has(String(category || ""));
+  const confidentEnough = catConf === "high" || catConf === "medium";
+
+  // ✅ Priority rule: if the doc is classified as an actionable category with medium/high confidence,
+  // never let "offer" logic override the steps. Offers can still be described in the narrative,
+  // but the user should not be told to ignore something they may need to act on.
+  if (isActionable && confidentEnough) return "action_required";
+
   // Offer detection should NOT rely on the model's category. Use deterministic patterns.
-  const combined = String(rawText || "") +
-    "\n\n" +
+  const combined =
+    String(rawText || "") +
+    "" +
     String(result?.plain_language_summary || "") +
-    "n\n" +
+    "" +
     String(result?.what_this_means_for_you || "");
 
   if (looksLikeOffer(combined)) return "offer";
 
-  // Action-required categories
-  if (["utility", "medical", "insurance", "debt_collection", "government", "employment", "school", "legal"].includes(category)) {
-    return "action_required";
-  }
-
   return "informational";
 }
+
 
 function sanitizeOfferOutput(result: any, language: "en" | "es") {
   const safeSteps =
