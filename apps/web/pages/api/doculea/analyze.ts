@@ -1,93 +1,10 @@
-
 import type { NextApiRequest, NextApiResponse } from "next";
 import OpenAI from "openai";
 
 import { DOCULEA_SYSTEM_PROMPT, buildDoculeaUserPrompt } from "../../../../../packages/core/src/prompts/doculeaPrompts";
 import { DoculeaResponseSchema, DoculeaResponse } from "../../../../../packages/core/src/schema/doculeaSchema";
-import { applyHardSafetyOverride, applyGovernmentSolicitationOverride, applyEcommerceNormalizationOverride, applyIntentAndPressureOverride, detectFormIntent, isGovernmentNotice } from "../../../../../packages/core/src/safety/doculeaSafety";
+import { applyHardSafetyOverride } from "../../../../../packages/core/src/safety/doculeaSafety";
 import { mapOutputToBucket } from "../../../../../packages/core/src/mapping/bucketMap";
-
-
-function looksLikeForm(text: string) {
-  // Gate Form Mode by *intent* and exclude government notices that may have structured layouts.
-  if (!detectFormIntent(text)) return false;
-  if (isGovernmentNotice(text)) return false;
-
-  const t = text.toLowerCase();
-  return (
-    /yes\s*\/\s*no/.test(t) ||
-    /\bparent\b|\bguardian\b|\bstudent\b/.test(t) ||
-    /\bsignature\b/.test(t) ||
-    /\bdate\b/.test(t) ||
-    /\bgrade\b|\bschool\b|\bdistrict\b/.test(t) ||
-    /\bmedical\b|\bdoctor\b|\bphysician\b|\bimmuniz\b/.test(t)
-  );
-}
-
-function applyFormGuidanceOverride(result: any, rawText: string, lang: "en" | "es") {
-  if (!looksLikeForm(rawText)) return result;
-
-    if (isGovernmentNotice(rawText)) return result;
-
-const isSchool =
-    /school|district|student|parent|guardian|grade/.test(rawText.toLowerCase());
-  const isMedical =
-    /medical|doctor|physician|clinic|immuniz|patient/.test(rawText.toLowerCase());
-
-  // Keep schema stable: we only adjust existing fields
-  const category = isSchool ? "school" : isMedical ? "medical" : "informational";
-
-  result.document_type = {
-    ...(result.document_type || {}),
-    category,
-    confidence: result.document_type?.confidence || "medium",
-  };
-
-  // Replace "what this means" with a form-friendly explanation
-  result.what_this_means_for_you =
-    lang === "es"
-      ? "Este documento parece ser un formulario para completar. No es una factura ni un pago. Normalmente requiere que marques opciones (Sí/No), completes datos básicos y firmes como padre/madre o tutor."
-      : "This looks like a form to complete. It’s not a bill or payment. You’ll usually need to check options (Yes/No), fill basic information, and sign as a parent/guardian.";
-
-  // Replace step-by-step actions to focus on completion + safety
-  result.step_by_step_actions = [
-    {
-      step: 1,
-      title: lang === "es" ? "Identifica qué te piden" : "Identify what’s requested",
-      description:
-        lang === "es"
-          ? "Busca campos como nombre del estudiante, fecha, firma, y preguntas Sí/No."
-          : "Look for fields like student name, date, signature, and Yes/No questions.",
-      urgency: "low",
-    },
-    {
-      step: 2,
-      title: lang === "es" ? "Completa sin adivinar" : "Fill it out without guessing",
-      description:
-        lang === "es"
-          ? "Si una pregunta no está clara, no inventes. Pregunta a la escuela/consulta al médico o traduce esa sección específica."
-          : "If a question isn’t clear, don’t guess. Ask the school/doctor or translate that specific section.",
-      urgency: "medium",
-    },
-    {
-      step: 3,
-      title: lang === "es" ? "Firma y entrega" : "Sign and submit",
-      description:
-        lang === "es"
-          ? "Firma donde corresponda y entrégalo según las instrucciones del documento (escuela/portal)."
-          : "Sign where needed and submit it using the instructions in the document (school/portal).",
-      urgency: "medium",
-    },
-  ];
-
-  // Keep red flags focused (do NOT add payment/call scripts for forms)
-  result.red_flags = Array.isArray(result.red_flags) ? result.red_flags : [];
-  result.suggested_scripts = result.suggested_scripts || {};
-  result.suggested_scripts.call_script = null;
-  result.suggested_scripts.email_template = null;
-
-  return result;
-}
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -166,7 +83,102 @@ function pickDocumentText(body: any): string | undefined {
   );
 }
 
+
+function looksLikeOffer(text: string) {
+  const t = (text || "").toLowerCase();
+
+  const offerWords = [
+    "offer","promotion","limited time","act now","enroll","enrollment","sign up","signup",
+    "call","visit","optional","program","protection program",
+    "oferta","promoción","promocion","inscrib","inscripción","inscripcion","llama","visita","programa","protección","proteccion"
+  ];
+
+  const hits = offerWords.filter(w => t.includes(w)).length;
+
+  const hasMonthlyPrice =
+    /\$\s?\d+(?:\.\d{2})?\s*(?:a\s*month|per\s*month)/i.test(text) ||
+    /\$\s?\d+(?:\.\d{2})?\s*(?:al\s*mes|por\s*mes)/i.test(text) ||
+    /\b\d+(?:\.\d{2})?\s*(?:\/month|\/mes)\b/i.test(text);
+
+  const hasCTA =
+    /\b(call|llama)\b.*\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b/i.test(text) ||
+    /\b(visit|visita)\b.*\b[a-z0-9.-]+\.[a-z]{2,}\b/i.test(text) ||
+    /\b(enroll|inscrib|sign up|inscripción|inscripcion)\b/i.test(text);
+
+  return hits >= 2 || hasMonthlyPrice || hasCTA;
+}
+
 // ---------- handler ----------
+
+function deriveUiActionType(result: any, rawText: string): "action_required" | "informational" | "offer" {
+  const category = result?.document_type?.category;
+  const status = result?.legitimacy_assessment?.status;
+
+  // If suspicious, avoid "action-required" flows; treat as informational/safety-first.
+  if (status === "suspicious") return "informational";
+
+  // Offer detection should NOT rely on the model's category. Use deterministic patterns.
+  const combined = String(rawText || "") +
+    "\n\n" +
+    String(result?.plain_language_summary || "") +
+    "n\n" +
+    String(result?.what_this_means_for_you || "");
+
+  if (looksLikeOffer(combined)) return "offer";
+
+  // Action-required categories
+  if (["utility", "medical", "insurance", "debt_collection", "government", "employment", "school", "legal"].includes(category)) {
+    return "action_required";
+  }
+
+  return "informational";
+}
+
+function sanitizeOfferOutput(result: any, language: "en" | "es") {
+  const safeSteps =
+    language === "es"
+      ? [
+          { step: 1, title: "Identificar que es una oferta", description: "Este documento parece ser una oferta o promoción. No es obligatorio inscribirse ni comprar nada.", urgency: "low" },
+          { step: 2, title: "Ignorar si no te interesa", description: "Si no lo solicitaste o no lo necesitas, puedes ignorarlo. Evita llamar números o visitar enlaces impresos en el documento.", urgency: "low" },
+          { step: 3, title: "Verificar por canales oficiales (opcional)", description: "Si te interesa, busca la empresa por tu cuenta (sitio oficial desde un buscador, reseñas confiables) y compara alternativas antes de decidir.", urgency: "low" },
+        ]
+      : [
+          { step: 1, title: "Recognize this is an offer", description: "This document appears to be a marketing offer or promotion. You are not required to sign up or purchase anything.", urgency: "low" },
+          { step: 2, title: "Ignore if you’re not interested", description: "If you didn’t request it or don’t need it, you can ignore it. Avoid calling numbers or clicking links printed on the letter.", urgency: "low" },
+          { step: 3, title: "Verify via official sources (optional)", description: "If you want it, look up the company independently (official website via search, reputable reviews) and compare alternatives before deciding.", urgency: "low" },
+        ];
+
+  result.step_by_step_actions = safeSteps;
+
+  // Remove scripts to avoid driving signups/purchases
+  result.suggested_scripts = { call_script: "", email_template: "" };
+  result.recommended_actions = [];
+
+  const extraSafety =
+    language === "es"
+      ? "Nota: Para ofertas, evita llamar números o visitar enlaces impresos en la carta. Si investigas, busca la empresa por tu cuenta."
+      : "Note: For offers, avoid calling numbers or clicking links printed on the letter. If you investigate, look up the company independently.";
+
+  result.safety_notes = result.safety_notes ? `${result.safety_notes}\n\n${extraSafety}` : extraSafety;
+
+  if (!Array.isArray(result.red_flags)) result.red_flags = [];
+  const offerFlag =
+    language === "es"
+      ? "Es una oferta/promoción: no es obligatorio inscribirse."
+      : "This is an offer/promotion: you are not required to sign up.";
+  if (!result.red_flags.includes(offerFlag)) result.red_flags.unshift(offerFlag);
+
+  return result;
+}
+
+function toConfidenceEnum(v: any): "high" | "medium" | "low" {
+  if (v === "high" || v === "medium" || v === "low") return v;
+  const n = typeof v === "number" ? v : Number(v);
+  if (!Number.isFinite(n)) return "medium";
+  if (n >= 0.8) return "high";
+  if (n >= 0.5) return "medium";
+  return "low";
+}
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
@@ -211,6 +223,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: DOCULEA_SYSTEM_PROMPT },
+          {
+            role: "system",
+            content:
+              language === "es"
+                ? "OUTPUT LANGUAGE REQUIREMENT: Write 100% of all user-visible text in Spanish (Español). Do not include English sentences or mixed-language text in any field. This includes summaries, meanings, steps, red flags, scripts, and safety notes."
+                : "OUTPUT LANGUAGE REQUIREMENT: Write 100% of all user-visible text in English. Do not include Spanish sentences or mixed-language text in any field. This includes summaries, meanings, steps, red flags, scripts, and safety notes.",
+          },
           { role: "user", content: userPrompt },
         ],
       }),
@@ -220,9 +239,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const raw = completion.choices?.[0]?.message?.content || "";
     if (!raw) return res.status(500).json({ error: "Empty AI response." });
 
-    let json: unknown;
+    let json: any;
     try {
       json = JSON.parse(raw);
+
+    // Normalize confidence fields to schema enums (pre-parse)
+    try {
+      if (json?.document_type) json.document_type.confidence = toConfidenceEnum(json.document_type.confidence);
+      if (json?.legitimacy_assessment) json.legitimacy_assessment.confidence = toConfidenceEnum(json.legitimacy_assessment.confidence);
+    } catch {
+      // ignore
+    }
     } catch {
       return res.status(500).json({ error: "AI returned invalid JSON." });
     }
@@ -245,18 +272,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // Apply hard safety overrides (use original text for scam signals)
     result = applyHardSafetyOverride(result, trimmedText, language);
-    // Government-like solicitations (e.g., NJ annual report private filing services)
-    result = applyGovernmentSolicitationOverride(result, trimmedText, language);
-    // E-commerce order confirmations (e.g., Temu) should be informational by default
-    result = applyEcommerceNormalizationOverride(result, trimmedText, language);
-    result = applyFormGuidanceOverride(result, trimmedText, language);
 
-    // Offers vs obligations vs manipulative solicitations (pressure language guardrails)
-    result = applyIntentAndPressureOverride(result, trimmedText, language);
+    const ui_action_type = deriveUiActionType(result, trimmedText);
+    (result as any).ui_action_type = ui_action_type;
 
-const { bucket, category } = mapOutputToBucket(result);
+    if (ui_action_type === "offer") {
+      result = sanitizeOfferOutput(result, language);
+    }
 
-    return res.status(200).json({ ...result, bucket, category });
+    // Extra safety: avoid scripts for suspicious/unclear (can accidentally push users into risky contact).
+    const st = result?.legitimacy_assessment?.status;
+    if (st === "suspicious" || st === "unclear") {
+      (result as any).suggested_scripts = { call_script: "", email_template: "" };
+    }
+
+    const { bucket, category } = mapOutputToBucket(result);
+
+    return res.status(200).json({ ...result, ui_action_type, bucket, category });
   } catch (err: any) {
     if (err?.message === "OpenAI request timed out") {
       return res.status(504).json({ error: "The analysis took too long. Please try again." });
@@ -264,3 +296,8 @@ const { bucket, category } = mapOutputToBucket(result);
     return res.status(500).json({ error: err?.message || "Server error" });
   }
 }
+
+
+
+
+
