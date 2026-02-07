@@ -1,12 +1,18 @@
+
 import type { NextApiRequest, NextApiResponse } from "next";
 import OpenAI from "openai";
 
 import { DOCULEA_SYSTEM_PROMPT, buildDoculeaUserPrompt } from "../../../../../packages/core/src/prompts/doculeaPrompts";
 import { DoculeaResponseSchema, DoculeaResponse } from "../../../../../packages/core/src/schema/doculeaSchema";
-import { applyHardSafetyOverride, applyGovernmentSolicitationOverride, applyEcommerceNormalizationOverride, applyIntentAndPressureOverride } from "../../../../../packages/core/src/safety/doculeaSafety";
+import { applyHardSafetyOverride, applyGovernmentSolicitationOverride, applyEcommerceNormalizationOverride, applyIntentAndPressureOverride, detectFormIntent, isGovernmentNotice } from "../../../../../packages/core/src/safety/doculeaSafety";
 import { mapOutputToBucket } from "../../../../../packages/core/src/mapping/bucketMap";
 
+
 function looksLikeForm(text: string) {
+  // Gate Form Mode by *intent* and exclude government notices that may have structured layouts.
+  if (!detectFormIntent(text)) return false;
+  if (isGovernmentNotice(text)) return false;
+
   const t = text.toLowerCase();
   return (
     /yes\s*\/\s*no/.test(t) ||
@@ -21,7 +27,9 @@ function looksLikeForm(text: string) {
 function applyFormGuidanceOverride(result: any, rawText: string, lang: "en" | "es") {
   if (!looksLikeForm(rawText)) return result;
 
-  const isSchool =
+    if (isGovernmentNotice(rawText)) return result;
+
+const isSchool =
     /school|district|student|parent|guardian|grade/.test(rawText.toLowerCase());
   const isMedical =
     /medical|doctor|physician|clinic|immuniz|patient/.test(rawText.toLowerCase());

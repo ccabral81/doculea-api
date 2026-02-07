@@ -610,3 +610,98 @@ export function applyIntentAndPressureOverride(
 
   return next as DoculeaResponse;
 }
+
+
+// -----------------------------
+// Form intent + Government notice detection (for Form Mode gating)
+// -----------------------------
+
+export function isGovernmentNotice(text: string): boolean {
+  const t = (text || "").toLowerCase();
+
+  const signals = [
+    "department of labor",
+    "departamento de trabajo",
+    "unemployment",
+    "desempleo",
+    "insurance benefits",
+    "seguro de desempleo",
+    "claim",
+    "reclamo",
+    "claimant",
+    "reclamante",
+    "determination",
+    "determinación",
+    "eligibility",
+    "elegibilidad",
+    "appointment",
+    "cita",
+    "hearing",
+    "audiencia",
+    "appeal",
+    "apelación",
+    "workforce",
+    "new jersey department of labor",
+    "njdol",
+  ];
+
+  return signals.some((s) => t.includes(s));
+}
+
+/**
+ * Returns true when the user is expected to FILL OUT a form (interactive form intent),
+ * not simply follow instructions in a notice.
+ */
+export function detectFormIntent(text: string): boolean {
+  const t = (text || "").toLowerCase();
+
+  // Phrases that explicitly ask the recipient to complete/return a form.
+  const fillSignals = [
+    "complete this form",
+    "fill out this form",
+    "please complete",
+    "return this form",
+    "questionnaire",
+    "application form",
+    "health history",
+    "parent/guardian must complete",
+    "student must complete",
+    "tax form",
+    "formulario",
+    "complete el formulario",
+    "por favor complete",
+    "devuelva este formulario",
+    "cuestionario",
+    "solicitud",
+    "historial de salud",
+  ];
+
+  const hasFillSignal = fillSignals.some((s) => t.includes(s));
+
+  // Structural hints of an interactive form (checkbox / yes-no / signature).
+  const structural =
+    /yes\s*\/\s*no/.test(t) ||
+    /\b(sí|si)\s*\/\s*no\b/.test(t) ||
+    /\bsignature\b/.test(t) ||
+    /\bfirma\b/.test(t) ||
+    /\bdate\b/.test(t) ||
+    /\bfecha\b/.test(t);
+
+  const schoolMedicalContext =
+    /\bparent\b|\bguardian\b|\bstudent\b|\bschool\b|\bdistrict\b|\bgrade\b/.test(t) ||
+    /\bpadre\b|\btutor\b|\bestudiante\b|\bescuela\b|\bdistrito\b|\bgrado\b/.test(t) ||
+    /\bmedical\b|\bdoctor\b|\bphysician\b|\bclinic\b|\bimmuniz/.test(t) ||
+    /\bmédic\b|\bdoctor\b|\bclínic\b|\binmuniz/.test(t);
+
+  // If it looks like a government notice (unemployment, determinations, hearings),
+  // do NOT treat it as a form unless explicit fill signals exist.
+  if (isGovernmentNotice(t) && !hasFillSignal) return false;
+
+  if (hasFillSignal) return true;
+
+  // Allow interactive forms that don't have explicit "complete this form" wording,
+  // but have school/medical context + structural signals.
+  if (schoolMedicalContext && structural) return true;
+
+  return false;
+}
