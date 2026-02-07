@@ -168,19 +168,84 @@ function withFollowStepsSuffix(summary: string, lang: Lang) {
   return s.endsWith(".") ? `${s} ${suffix}` : `${s}. ${suffix}`;
 }
 
-function speakQueue(parts: string[], lang: Lang) {
+// -----------------------
+// 🔊 Voice helpers (prevents “Spanglish” after idle by pinning the correct voice)
+// -----------------------
+let __doculeaVoiceCache: { es: SpeechSynthesisVoice | null; en: SpeechSynthesisVoice | null } = { es: null, en: null };
+let __doculeaVoicesWarm = false;
+
+function ensureVoicesLoaded() {
   if (typeof window === "undefined") return;
   if (!("speechSynthesis" in window)) return;
   try {
+    // Calling getVoices() once helps populate voices list in many browsers (esp. iOS/Safari)
+    window.speechSynthesis.getVoices?.();
+    __doculeaVoicesWarm = true;
+  } catch {
+    // ignore
+  }
+}
+
+function pickBestVoice(lang: Lang): SpeechSynthesisVoice | null {
+  if (typeof window === "undefined") return null;
+  if (!("speechSynthesis" in window)) return null;
+
+  const voices = window.speechSynthesis.getVoices?.() || [];
+  if (!voices.length) return null;
+
+  const target = lang === "es" ? "es" : "en";
+  const preferredOrder =
+    lang === "es"
+      ? ["es-MX", "es-US", "es-419", "es-ES", "es"]
+      : ["en-US", "en-GB", "en"];
+
+  const byLang = (v: SpeechSynthesisVoice, code: string) => (v.lang || "").toLowerCase().startsWith(code.toLowerCase());
+
+  // 1) Try preferred locale order with localService first
+  for (const code of preferredOrder) {
+    const v = voices.find((vv) => vv.localService && byLang(vv, code));
+    if (v) return v;
+  }
+  // 2) Any match in preferred order
+  for (const code of preferredOrder) {
+    const v = voices.find((vv) => byLang(vv, code));
+    if (v) return v;
+  }
+  // 3) Fallback: any voice that starts with target language
+  return voices.find((vv) => (vv.lang || "").toLowerCase().startsWith(target)) || null;
+}
+
+function getPinnedVoice(lang: Lang): SpeechSynthesisVoice | null {
+  ensureVoicesLoaded();
+
+  // Refresh cache each time because browsers can “forget” voices after idle/background.
+  const v = pickBestVoice(lang);
+  __doculeaVoiceCache[lang] = v;
+  return v;
+}
+
+function speakQueue(parts: string[], lang: Lang) {
+  if (typeof window === "undefined") return;
+  if (!("speechSynthesis" in window)) return;
+
+  try {
+    // Warm voices list before speaking (helps iOS Safari)
+    if (!__doculeaVoicesWarm) ensureVoicesLoaded();
+
     window.speechSynthesis.cancel();
+
     const voiceLang = lang === "es" ? "es-MX" : "en-US";
+    const voice = getPinnedVoice(lang);
+
     for (const p of parts) {
       const text = (p || "").trim();
       if (!text) continue;
       const u = new SpeechSynthesisUtterance(text);
       u.lang = voiceLang;
+      if (voice) u.voice = voice;
       u.rate = 1.0;
       u.pitch = 1.0;
+      u.volume = 1.0;
       window.speechSynthesis.speak(u);
     }
   } catch {
@@ -188,17 +253,26 @@ function speakQueue(parts: string[], lang: Lang) {
   }
 }
 
-
 function ensureVoiceArmed(lang: Lang): boolean {
   if (typeof window === "undefined") return false;
   if (!("speechSynthesis" in window)) return false;
+
   try {
     // Must be called from a user gesture on iOS (tap/click)
-    const u = new SpeechSynthesisUtterance(lang === "es" ? "Listo." : "Ready.");
+    ensureVoicesLoaded();
+    window.speechSynthesis.cancel();
+
+    const u = new SpeechSynthesisUtterance(lang === "es" ? "Listo" : "Ready");
     u.lang = lang === "es" ? "es-MX" : "en-US";
-    u.volume = 1.0; // keep audible for reliability on iOS Safari
+
+    const voice = getPinnedVoice(lang);
+    if (voice) u.voice = voice;
+
+    // Near-silent “arm” — still counts as a speak() call, avoids being intrusive
+    u.volume = 0.01;
     u.rate = 1.0;
     u.pitch = 1.0;
+
     window.speechSynthesis.speak(u);
     return true;
   } catch {
@@ -209,13 +283,25 @@ function ensureVoiceArmed(lang: Lang): boolean {
 function speakNow(text: string, lang: Lang) {
   if (typeof window === "undefined") return;
   if (!("speechSynthesis" in window)) return;
+
+  const s = (text || "").trim();
+  if (!s) return;
+
   try {
+    if (!__doculeaVoicesWarm) ensureVoicesLoaded();
+
     window.speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance((text || "").trim());
+
+    const u = new SpeechSynthesisUtterance(s);
     u.lang = lang === "es" ? "es-MX" : "en-US";
+
+    const voice = getPinnedVoice(lang);
+    if (voice) u.voice = voice;
+
     u.volume = 1.0;
     u.rate = 1.0;
     u.pitch = 1.0;
+
     window.speechSynthesis.speak(u);
   } catch {
     // ignore

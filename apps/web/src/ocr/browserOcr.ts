@@ -62,6 +62,57 @@ export type OcrQuality = {
   reason?: string;
 };
 
+function isAndroidUA() {
+  if (typeof navigator === "undefined") return false;
+  return /Android/i.test(navigator.userAgent);
+}
+
+async function downscaleOnAndroid(file: File, maxSide = 2200): Promise<File> {
+  if (typeof window === "undefined") return file;
+  if (!isAndroidUA()) return file;
+
+  // Only attempt on images; otherwise return as-is
+  if (!file.type.startsWith("image/")) return file;
+
+  const img = document.createElement("img");
+  const url = URL.createObjectURL(file);
+  img.src = url;
+
+  await new Promise<void>((resolve, reject) => {
+    img.onload = () => resolve();
+    img.onerror = () => reject(new Error("Image load failed"));
+  });
+
+  URL.revokeObjectURL(url);
+
+  const longest = Math.max(img.width, img.height);
+  if (longest <= maxSide) return file;
+
+  const scale = maxSide / longest;
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(img.width * scale);
+  canvas.height = Math.round(img.height * scale);
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return file;
+
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+  const blob = await new Promise<Blob | null>((r) =>
+    canvas.toBlob(r, "image/jpeg", 0.85)
+  );
+
+  if (!blob) return file;
+
+  return new File([blob], file.name.replace(/\.\w+$/, ".jpg"), { type: "image/jpeg" });
+}
+
+export async function prepareImageForOcr(file: File): Promise<File> {
+  // Android-only downscale; iPhone behavior unchanged
+  return downscaleOnAndroid(file);
+}
+
+
 function computeOcrQuality(text: string): OcrQuality {
   const raw = text || "";
   const normalized = raw.replace(/\s+/g, " ").trim();

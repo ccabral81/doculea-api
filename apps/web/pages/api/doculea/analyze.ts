@@ -6,6 +6,81 @@ import { DoculeaResponseSchema, DoculeaResponse } from "../../../../../packages/
 import { applyHardSafetyOverride, applyGovernmentSolicitationOverride, applyEcommerceNormalizationOverride, applyIntentAndPressureOverride } from "../../../../../packages/core/src/safety/doculeaSafety";
 import { mapOutputToBucket } from "../../../../../packages/core/src/mapping/bucketMap";
 
+function looksLikeForm(text: string) {
+  const t = text.toLowerCase();
+  return (
+    /yes\s*\/\s*no/.test(t) ||
+    /\bparent\b|\bguardian\b|\bstudent\b/.test(t) ||
+    /\bsignature\b/.test(t) ||
+    /\bdate\b/.test(t) ||
+    /\bgrade\b|\bschool\b|\bdistrict\b/.test(t) ||
+    /\bmedical\b|\bdoctor\b|\bphysician\b|\bimmuniz\b/.test(t)
+  );
+}
+
+function applyFormGuidanceOverride(result: any, rawText: string, lang: "en" | "es") {
+  if (!looksLikeForm(rawText)) return result;
+
+  const isSchool =
+    /school|district|student|parent|guardian|grade/.test(rawText.toLowerCase());
+  const isMedical =
+    /medical|doctor|physician|clinic|immuniz|patient/.test(rawText.toLowerCase());
+
+  // Keep schema stable: we only adjust existing fields
+  const category = isSchool ? "school" : isMedical ? "medical" : "informational";
+
+  result.document_type = {
+    ...(result.document_type || {}),
+    category,
+    confidence: result.document_type?.confidence || "medium",
+  };
+
+  // Replace "what this means" with a form-friendly explanation
+  result.what_this_means_for_you =
+    lang === "es"
+      ? "Este documento parece ser un formulario para completar. No es una factura ni un pago. Normalmente requiere que marques opciones (Sí/No), completes datos básicos y firmes como padre/madre o tutor."
+      : "This looks like a form to complete. It’s not a bill or payment. You’ll usually need to check options (Yes/No), fill basic information, and sign as a parent/guardian.";
+
+  // Replace step-by-step actions to focus on completion + safety
+  result.step_by_step_actions = [
+    {
+      step: 1,
+      title: lang === "es" ? "Identifica qué te piden" : "Identify what’s requested",
+      description:
+        lang === "es"
+          ? "Busca campos como nombre del estudiante, fecha, firma, y preguntas Sí/No."
+          : "Look for fields like student name, date, signature, and Yes/No questions.",
+      urgency: "low",
+    },
+    {
+      step: 2,
+      title: lang === "es" ? "Completa sin adivinar" : "Fill it out without guessing",
+      description:
+        lang === "es"
+          ? "Si una pregunta no está clara, no inventes. Pregunta a la escuela/consulta al médico o traduce esa sección específica."
+          : "If a question isn’t clear, don’t guess. Ask the school/doctor or translate that specific section.",
+      urgency: "medium",
+    },
+    {
+      step: 3,
+      title: lang === "es" ? "Firma y entrega" : "Sign and submit",
+      description:
+        lang === "es"
+          ? "Firma donde corresponda y entrégalo según las instrucciones del documento (escuela/portal)."
+          : "Sign where needed and submit it using the instructions in the document (school/portal).",
+      urgency: "medium",
+    },
+  ];
+
+  // Keep red flags focused (do NOT add payment/call scripts for forms)
+  result.red_flags = Array.isArray(result.red_flags) ? result.red_flags : [];
+  result.suggested_scripts = result.suggested_scripts || {};
+  result.suggested_scripts.call_script = null;
+  result.suggested_scripts.email_template = null;
+
+  return result;
+}
+
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const DEBUG = process.env.NODE_ENV !== "production";
@@ -162,19 +237,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // Apply hard safety overrides (use original text for scam signals)
     result = applyHardSafetyOverride(result, trimmedText, language);
-
-    
-
-    
-
     // Government-like solicitations (e.g., NJ annual report private filing services)
     result = applyGovernmentSolicitationOverride(result, trimmedText, language);
-
     // E-commerce order confirmations (e.g., Temu) should be informational by default
     result = applyEcommerceNormalizationOverride(result, trimmedText, language);
+    result = applyFormGuidanceOverride(result, trimmedText, language);
 
     // Offers vs obligations vs manipulative solicitations (pressure language guardrails)
     result = applyIntentAndPressureOverride(result, trimmedText, language);
+
 const { bucket, category } = mapOutputToBucket(result);
 
     return res.status(200).json({ ...result, bucket, category });
