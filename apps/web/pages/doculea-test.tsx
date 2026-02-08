@@ -1,6 +1,7 @@
 "use client";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ocrInBrowser, isOcrTextUsable, cleanOcrText } from "@/ocr/browserOcr";
+import{logEvent} from "@/utils/analytics"
 
 type Lang = "en" | "es";
 type Step = "idle" | "preparing" | "ocr" | "analyzing" | "done" | "error";
@@ -280,11 +281,32 @@ function ensureVoiceArmed(lang: Lang): boolean {
   }
 }
 
+function sanitizeForSpeech(input: string): string {
+  return (input || "")
+    // bullets/dots
+    .replace(/[\u2022\u25CF]/g, "") // • ●
+    // smart quotes → normal quotes
+    .replace(/[“”]/g, '"')
+    // common emoji/symbols that TTS reads literally
+    .replace(/[✅✔️☑️🚫⛔⚠️]/g, "")
+    // OCR artifacts that get spoken (“plus”)
+    .replace(/\+/g, "")
+    // normalize whitespace
+    .replace(/\r/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
 function speakNow(text: string, lang: Lang) {
+  logEvent("voice_spoken",{lang, parts:3})
   if (typeof window === "undefined") return;
   if (!("speechSynthesis" in window)) return;
 
-  const s = (text || "").trim();
+  const raw = (text || "").trim();
+  if (!raw) return;
+
+  const s = sanitizeForSpeech(raw);
   if (!s) return;
 
   try {
@@ -555,6 +577,8 @@ export default function DoculeaTestPage() {
   useEffect(() => setStoredLang(lang), [lang]);
   useEffect(() => setStoredSpeak(speakOn), [speakOn]);
 
+  useEffect(()=> {logEvent("page_open", {lang})},[]);
+
   // Narrate progress (only once per step)
   useEffect(() => {
     if (!speakOn) return;
@@ -617,10 +641,10 @@ export default function DoculeaTestPage() {
 
   async function onPickPhoto(e: React.ChangeEvent<HTMLInputElement>) {
     if (typeof window === "undefined") return;
-
     const f = e.target.files?.[0] || null;
     e.currentTarget.value = "";
     if (!f) return;
+    logEvent("photo_picked", {lang, fileType: f.type || null});
 
     // iOS Safari: treat this selection as a user gesture and unlock speech
     if (!speakOn) setSpeakOn(true);
@@ -664,33 +688,53 @@ export default function DoculeaTestPage() {
     const normalized = await normalizeToJpegIfHeic(file);
 
     setStep("ocr");
+    logEvent("ocr_start", {lang});
     const ocrText = await ocrInBrowser(normalized, language);
     setExtractedText(ocrText);
-
     const q: any = isOcrTextUsable(ocrText, language);
     if (q?.level === "fail" || q?.ok === false) {
+     
       setStep("error");
+      logEvent("ocr_fail_quality", {lang, ocr: {chars:q.charCount, words:q.wordCount, phrases: q.phraseCount, lines: q.lineCount},
+            });
       const msg =
         language === "es"
           ? `${t(language, "weakOcrTitle")} (caracteres=${q.charCount}, palabras=${q.wordCount}, frases=${q.phraseCount}, líneas=${q.lineCount}).\n\n${t(language, "weakOcrBody")}`
           : `${t(language, "weakOcrTitle")} (chars=${q.charCount}, words=${q.wordCount}, phrases=${q.phraseCount}, lines=${q.lineCount}).\n\n${t(language, "weakOcrBody")}`;
       throw new Error(msg);
     }
-
+    logEvent("ocr_ok", {lang, ocr: {chars:q.charCount, words:q.wordCount, phrases: q.phraseCount, lines: q.lineCount},
+      });
     // send cleaned text for better signal
-    const cleaned = cleanOcrText ? cleanOcrText(ocrText).trim() : ocrText.trim();
+    const cleaned = cleanOcrText ? cleanOcrText(ocrText).trim() : ocrText.trim();     
 
     setStep("analyzing");
+    logEvent("analyze_start", {lang, source: "photo"});
     const resp = await fetch("/api/doculea/analyze", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text: cleaned, language }),
-    });
-
+    }
+  );
+   
     const json = await resp.json();
-    if (!resp.ok) throw new Error(json?.error || `Analyze failed (${resp.status})`);
+    if (!resp.ok) {
+    logEvent("analyze_fail", {
+      lang,
+      source: "photo",
+      error: String(json?.error || `Analyze failed (${resp.status})`)
+    });  
+    throw new Error(json?.error || `Analyze failed (${resp.status})`);
+    }
 
     setResult(json);
+      logEvent("analyze_success", {
+      lang,
+      source: "photo",
+    docType: json?.document_type?.category ?? null,
+    status: json?.legitimacy_asssessment?.status ?? null,
+    confidence: json?.legitimacy_asssessment?.confidence ?? null,
+    });  
     setStep("done");
 
     if (speakOn && json?.plain_language_summary) {

@@ -1,0 +1,38 @@
+function getDevice(){
+  if (typeof navigator === "undefined") return "sever";
+  return /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent)?"mobile":"desktop";
+}
+
+function getSessionId() {
+  if (typeof window === "undefined") return "server";
+  const k = "doculea_session_id";
+  let v = localStorage.getItem(k);
+  if (!v) {
+    v =     
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+    ?crypto.randomUUID()
+    : String(Date.now());
+    localStorage.setItem(k, v);
+  }
+  return v;
+}
+
+export async function logEvent(event: string, extra: Record<string, any>={}) {
+  try {
+    await fetch("/api/doculea/events", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event,
+        tsClient: new Date().toISOString(),
+        getSessionId: getSessionId(),
+        lang: extra.lang,
+        device: getDevice(),
+        route:"/doculea-test",
+        ...extra,
+      }),
+    });
+  } catch {
+    // ignore logging failures
+  }
+}
