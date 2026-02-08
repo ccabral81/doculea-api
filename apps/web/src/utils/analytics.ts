@@ -3,11 +3,11 @@ function getDevice(){
   return /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent)?"mobile":"desktop";
 }
 
-function getSessionId() {
+function getSessionId(): string {
   if (typeof window === "undefined") return "server";
   const k = "doculea_session_id";
   let v = localStorage.getItem(k);
-  if (!v) {
+  if (v===null) {
     v =     
     typeof crypto !== "undefined" && "randomUUID" in crypto
     ?crypto.randomUUID()
@@ -19,7 +19,8 @@ function getSessionId() {
 
 export async function logEvent(event: string, extra: Record<string, any>={}) {
   const sessionId =getSessionId();
-      void fetch("/api/doculea/events", {
+  try {
+    await fetch("/api/doculea/events", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -32,4 +33,7 @@ export async function logEvent(event: string, extra: Record<string, any>={}) {
         ...extra,
       }),
     });
+  } catch {
+    // ignore logging failures
+  }
 }
