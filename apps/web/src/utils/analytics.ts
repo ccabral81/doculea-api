@@ -18,6 +18,7 @@ function getSessionId() {
 }
 
 export async function logEvent(event: string, extra: Record<string, any>={}) {
+  const sessionId =getSessionId();
   try {
     await fetch("/api/doculea/events", {
       method: "POST",
@@ -25,7 +26,7 @@ export async function logEvent(event: string, extra: Record<string, any>={}) {
       body: JSON.stringify({
         event,
         tsClient: new Date().toISOString(),
-        getSessionId: getSessionId(),
+        sessionId,
         lang: extra.lang,
         device: getDevice(),
         route:"/doculea-test",
