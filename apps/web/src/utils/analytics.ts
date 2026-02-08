@@ -1,5 +1,5 @@
 function getDevice(){
-  if (typeof navigator === "undefined") return "sever";
+  if (typeof navigator === "undefined") return "server";
   return /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent)?"mobile":"desktop";
 }
 
@@ -17,8 +17,8 @@ export function getSessionId(): string {
   return v;
 }
 
-export async function logEvent(event: string, extra: Record<string, any>={}) {
-  const sessionId =getSessionId();
+export async function logEvent(event: string, extra: Record<string, any> = {}) {
+  const sessionId = getSessionId();
   try {
     await fetch("/api/doculea/events", {
       method: "POST",
@@ -26,14 +26,12 @@ export async function logEvent(event: string, extra: Record<string, any>={}) {
       body: JSON.stringify({
         event,
         tsClient: new Date().toISOString(),
-        sessionId,
         lang: extra.lang,
         device: getDevice(),
-        route:"/doculea-test",
-        ...extra,
+        route: "/doculea-test",
+        ...extra,       // first
+        sessionId,      // last (cannot be overwritten)
       }),
     });
-  } catch {
-    // ignore logging failures
-  }
+  } catch {}
 }
