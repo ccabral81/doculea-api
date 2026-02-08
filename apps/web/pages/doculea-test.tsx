@@ -732,8 +732,8 @@ export default function DoculeaTestPage() {
       lang,
       source: "photo",
     docType: json?.document_type?.category ?? null,
-    status: json?.legitimacy_asssessment?.status ?? null,
-    confidence: json?.legitimacy_asssessment?.confidence ?? null,
+    status: json?.legitimacy_assessment?.status ?? null,
+    confidence: json?.legitimacy_assessment?.confidence ?? null,
     });  
     setStep("done");
 

@@ -16,21 +16,18 @@ import {
   applyGovernmentSolicitationOverride,
   applyEcommerceNormalizationOverride,
   applyIntentAndPressureOverride,
-  // These are present in your doculeaSafety.ts (you pasted them earlier)
-  isGovernmentNotice,
   detectFormIntent,
 } from "../../../../../packages/core/src/safety/doculeaSafety";
 
 import { mapOutputToBucket } from "../../../../../packages/core/src/mapping/bucketMap";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
 const DEBUG = process.env.NODE_ENV !== "production";
 
 // Hard limits
 const MAX_CHARS = 20000;
 
-// Long-doc handling (local)
+// Long-doc handling (local, no extra model call)
 const CONDENSE_THRESHOLD_CHARS = 4500;
 const CONDENSE_TARGET_CHARS = 3500;
 
@@ -39,7 +36,6 @@ const OPENAI_TIMEOUT_MS = 30_000;
 const OPENAI_MAX_TOKENS = 800;
 
 // ---------- utils ----------
-
 function withTimeout<T>(promise: PromiseLike<T>, ms: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(
@@ -111,24 +107,17 @@ function toConfidenceEnum(v: any): "high" | "medium" | "low" {
   return "low";
 }
 
-/**
- * Form guidance override:
- * Only apply when the text really looks like a "fillable form",
- * and NOT when it’s a government notice (unemployment, determinations, hearings, etc).
- */
+// -----------------------
+// Form guidance override (safe + gated)
+// Uses detectFormIntent() from doculeaSafety to avoid gov notices getting form steps.
+// -----------------------
 function applyFormGuidanceOverride(result: any, rawText: string, lang: "en" | "es") {
-  const t = String(rawText || "");
-  const lower = t.toLowerCase();
+  if (!detectFormIntent(rawText)) return result;
 
-  // Use your doculeaSafety helpers (more robust than the earlier "looksLikeForm")
-  const isForm = detectFormIntent(t);
-  const isGovNotice = isGovernmentNotice(t);
+  const lower = rawText.toLowerCase();
 
-  if (!isForm) return result;
-  if (isGovNotice) return result;
-
-  const isSchool = /school|district|student|parent|guardian|grade/.test(lower);
-  const isMedical = /medical|doctor|physician|clinic|immuniz|patient/.test(lower);
+  const isSchool = /school|district|student|parent|guardian|grade|escuela|distrito|estudiante|padre|tutor|grado/.test(lower);
+  const isMedical = /medical|doctor|physician|clinic|immuniz|patient|m[eé]dic|doctor|cl[ií]nic|inmuniz|paciente/.test(lower);
 
   const category = isSchool ? "school" : isMedical ? "medical" : "informational";
 
@@ -149,8 +138,8 @@ function applyFormGuidanceOverride(result: any, rawText: string, lang: "en" | "e
       title: lang === "es" ? "Identifica qué te piden" : "Identify what’s requested",
       description:
         lang === "es"
-          ? "Busca campos como nombre del estudiante, fecha, firma, y preguntas Sí/No."
-          : "Look for fields like student name, date, signature, and Yes/No questions.",
+          ? "Busca campos como nombre, fecha, firma, y preguntas Sí/No."
+          : "Look for fields like name, date, signature, and Yes/No questions.",
       urgency: "low",
     },
     {
@@ -173,27 +162,22 @@ function applyFormGuidanceOverride(result: any, rawText: string, lang: "en" | "e
     },
   ];
 
+  // Avoid scripts for forms
   result.red_flags = Array.isArray(result.red_flags) ? result.red_flags : [];
-  result.suggested_scripts = result.suggested_scripts || {};
-  result.suggested_scripts.call_script = null;
-  result.suggested_scripts.email_template = null;
+  result.suggested_scripts = { call_script: null, email_template: null };
 
   return result;
 }
 
-/**
- * UI action type for your existing doculea-test.tsx behavior.
- * Keep it simple and consistent with your “intent/pressure” layer:
- * - If status suspicious/unclear -> informational
- * - If intent/pressure made it “optional offer”/“solicitation” style -> offer
- * - If category is actionable (gov/utility/medical/etc) and confidence med/high -> action_required
- */
+// -----------------------
+// UI action type (for your front-end gating)
+// -----------------------
 function deriveUiActionType(result: any): "action_required" | "informational" | "offer" {
   const status = result?.legitimacy_assessment?.status;
-  if (status === "suspicious" || status === "unclear") return "informational";
-
   const category = result?.document_type?.category;
   const catConf = result?.document_type?.confidence;
+
+  if (status === "suspicious") return "informational";
 
   const actionableCats = new Set([
     "utility",
@@ -212,15 +196,14 @@ function deriveUiActionType(result: any): "action_required" | "informational" | 
   const confidentEnough = catConf === "high" || catConf === "medium";
   if (isActionable && confidentEnough) return "action_required";
 
-  const sum = String(result?.plain_language_summary || "").toLowerCase();
-  // These prefixes are added by your intent/pressure override in doculeaSafety.ts
-  if (sum.startsWith("oferta opcional:") || sum.startsWith("optional offer:")) return "offer";
-  if (sum.startsWith("aviso comercial") || sum.startsWith("optional solicitation")) return "offer";
+  // If intent/pressure override or other layers produced "offer-like" steps, treat as offer
+  const steps = Array.isArray(result?.step_by_step_actions) ? result.step_by_step_actions : [];
+  const joined = steps.map((s: any) => `${s?.title || ""} ${s?.description || ""}`.toLowerCase()).join(" ");
+  const offerHints = ["offer", "promotion", "optional", "oferta", "promoción", "opcional"];
+  if (offerHints.some((h) => joined.includes(h))) return "offer";
 
   return "informational";
 }
-
-// ---------- handler ----------
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
@@ -241,20 +224,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const trimmedText = documentText.trim();
 
     if (trimmedText.length < 40) {
-      return res
-        .status(400)
-        .json({ error: "Text is too short. Please provide more of the document." });
+      return res.status(400).json({ error: "Text is too short. Please provide more of the document." });
     }
 
     const language: "en" | "es" = normalizeLang(lang);
 
-    // Long-doc handling: condense locally
     let textForAI = trimmedText;
     if (textForAI.length > CONDENSE_THRESHOLD_CHARS) {
       textForAI = condenseTextLocal(textForAI, CONDENSE_TARGET_CHARS);
     }
-
-    // Hard truncate as last resort
     textForAI = clipToMaxChars(textForAI, MAX_CHARS);
 
     const userPrompt = buildDoculeaUserPrompt(textForAI, language);
@@ -287,14 +265,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     try {
       json = JSON.parse(raw);
 
-      // Normalize confidence fields before schema parse
+      // normalize confidence BEFORE schema parse
       try {
-        if (json?.document_type)
-          json.document_type.confidence = toConfidenceEnum(json.document_type.confidence);
-        if (json?.legitimacy_assessment)
-          json.legitimacy_assessment.confidence = toConfidenceEnum(
-            json.legitimacy_assessment.confidence
-          );
+        if (json?.document_type) json.document_type.confidence = toConfidenceEnum(json.document_type.confidence);
+        if (json?.legitimacy_assessment) json.legitimacy_assessment.confidence = toConfidenceEnum(json.legitimacy_assessment.confidence);
       } catch {
         // ignore
       }
@@ -305,10 +279,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const parsed = DoculeaResponseSchema.safeParse(json);
     if (!parsed.success) {
       if (DEBUG) {
-        return res.status(500).json({
-          error: "AI output failed schema validation.",
-          details: parsed.error.format(),
-        });
+        return res.status(500).json({ error: "AI output failed schema validation.", details: parsed.error.format() });
       }
       return res.status(500).json({ error: "AI output failed schema validation." });
     }
@@ -316,32 +287,30 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     let result = parsed.data as DoculeaResponse;
 
     if (!result.step_by_step_actions || result.step_by_step_actions.length < 2) {
-      return res
-        .status(500)
-        .json({ error: "AI output missing minimum step-by-step actions." });
+      return res.status(500).json({ error: "AI output missing minimum step-by-step actions." });
     }
 
     result = renumberSteps(result);
 
-    // --- SAFETY / NORMALIZATION PIPELINE (THIS IS WHAT GOT LOST) ---
+    // ✅ Restore your missing safety layers (order matters)
     result = applyHardSafetyOverride(result, trimmedText, language);
     result = applyGovernmentSolicitationOverride(result, trimmedText, language);
     result = applyEcommerceNormalizationOverride(result, trimmedText, language);
 
-    // Form-only guidance (won’t apply to gov notices like unemployment)
+    // Form mode (gated properly)
     result = applyFormGuidanceOverride(result as any, trimmedText, language) as DoculeaResponse;
 
-    // Intent + pressure layer (optional offer vs manipulative solicitation vs obligation)
+    // Intent / pressure normalization (this is what prevents “sign up / call now” harm)
     result = applyIntentAndPressureOverride(result, trimmedText, language);
 
-    // Extra safety: avoid scripts for suspicious/unclear/offer-ish flows
-    const st = (result as any)?.legitimacy_assessment?.status;
+    // Extra safety: avoid scripts for suspicious/unclear
+    const st = result?.legitimacy_assessment?.status;
+    if (st === "suspicious" || st === "unclear") {
+      (result as any).suggested_scripts = { call_script: null, email_template: null };
+    }
+
     const ui_action_type = deriveUiActionType(result);
     (result as any).ui_action_type = ui_action_type;
-
-    if (ui_action_type === "offer" || st === "suspicious" || st === "unclear") {
-      (result as any).suggested_scripts = { call_script: "", email_template: "" };
-    }
 
     const { bucket, category } = mapOutputToBucket(result);
 
