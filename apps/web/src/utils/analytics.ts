@@ -19,8 +19,7 @@ function getSessionId() {
 
 export async function logEvent(event: string, extra: Record<string, any>={}) {
   const sessionId =getSessionId();
-  try {
-    await fetch("/api/doculea/events", {
+      void fetch("/api/doculea/events", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -33,7 +32,4 @@ export async function logEvent(event: string, extra: Record<string, any>={}) {
         ...extra,
       }),
     });
-  } catch {
-    // ignore logging failures
-  }
 }
