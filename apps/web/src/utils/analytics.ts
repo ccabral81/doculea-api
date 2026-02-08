@@ -3,7 +3,7 @@ function getDevice(){
   return /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent)?"mobile":"desktop";
 }
 
-function getSessionId(): string {
+export function getSessionId(): string {
   if (typeof window === "undefined") return "server";
   const k = "doculea_session_id";
   let v = localStorage.getItem(k);

@@ -1,13 +1,14 @@
 "use client";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ocrInBrowser, isOcrTextUsable, cleanOcrText } from "@/ocr/browserOcr";
-import{logEvent} from "@/utils/analytics"
+import{logEvent, getSessionId} from "@/utils/analytics"
 
 type Lang = "en" | "es";
 type Step = "idle" | "preparing" | "ocr" | "analyzing" | "done" | "error";
 
 const STORAGE_LANG_KEY = "doculea_lang";
 const STORAGE_SPEAK_KEY = "doculea_speak";
+const sessionId = getSessionId
 
 const COPY: Record<Lang, Record<string, string>> = {
   es: {
@@ -299,7 +300,7 @@ function sanitizeForSpeech(input: string): string {
 }
 
 function speakNow(text: string, lang: Lang) {
-  logEvent("voice_spoken",{lang, parts:3})
+  logEvent("voice_spoken",{sessionId, lang, parts:3})
   if (typeof window === "undefined") return;
   if (!("speechSynthesis" in window)) return;
 
@@ -577,7 +578,7 @@ export default function DoculeaTestPage() {
   useEffect(() => setStoredLang(lang), [lang]);
   useEffect(() => setStoredSpeak(speakOn), [speakOn]);
 
-  useEffect(()=> {logEvent("page_open", {lang})},[]);
+  useEffect(()=> {logEvent("page_open", {sessionId, lang})},[]);
 
   // Narrate progress (only once per step)
   useEffect(() => {
