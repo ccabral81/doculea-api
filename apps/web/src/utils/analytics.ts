@@ -5,17 +5,25 @@ function getDevice(){
 
 export function getSessionId(): string {
   if (typeof window === "undefined") return "server";
+
   const k = "doculea_session_id";
   let v = localStorage.getItem(k);
-  if (v===null) {
-    v =     
-    typeof crypto !== "undefined" && "randomUUID" in crypto
-    ?crypto.randomUUID()
-    : String(Date.now());
+
+  if (!v) {
+    const hasUUID =
+      typeof globalThis.crypto !== "undefined" &&
+      typeof globalThis.crypto.randomUUID === "function";
+
+    v = hasUUID
+      ? globalThis.crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
     localStorage.setItem(k, v);
   }
+
   return v;
 }
+
 
 export async function logEvent(event: string, extra: Record<string, any> = {}) {
   const sessionId = getSessionId();
