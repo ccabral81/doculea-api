@@ -1026,7 +1026,7 @@ useEffect(() => {
                 color: "#111827",
                 fontWeight: 900,
                 cursor: loading ? "not-allowed" : "pointer",
-                minWidth: 210,
+                minWidth: 170,
                 opacity: loading ? 0.6 : 1,
               }}
             >
