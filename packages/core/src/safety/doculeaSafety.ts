@@ -151,7 +151,7 @@ export function hasHardScamSignalsV2(text: string): boolean {
   if (hasGovLookalikeDomain) return true;
   if (hasNJClaimButNoOfficialDomain && (pressure || mentionsPaymentPortal)) return true;
   if (hasPaymentLinkOnNonOfficialDomain && (pressure || govSignals)) return true;
-  if (pressure && govSignals && missingIds && hasAnyUrl) return true;
+  if (!hasAnyUrl && pressure && govSignals && missingIds && mentionsPaymentPortal) return true;
 
   return false;
 }
