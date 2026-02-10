@@ -114,60 +114,9 @@ function missingCaseIdentifiers(t: string): boolean {
   return !hasIdentifiers;
 }
 
-function looksLikeUtilityBill(t: string): boolean {
-  const s = (t || "").toLowerCase();
-  const signals = [ "amount due",
-    "total due",
-    "balance due",
-    "due date",
-    "billing period",
-    "statement date",
-    "account number",
-    "service address",
-    "meter",
-    "usage",
-    "previous balance",
-    "current charges",
-    "payment received",
-    "remit",
-    "remittance",
-    "payment stub",
-    "water",
-    "sewer",
-    "utility bill",
-    // Spanish
-    "monto a pagar",
-    "total a pagar",
-    "saldo",
-    "fecha de vencimiento",
-    "periodo de facturacion",
-    "fecha de estado",
-    "numero de cuenta",
-    "direccion de servicio",
-    "medidor",
-    "consumo",
-    "saldo anterior",
-    "cargos actuales",
-    "pago recibido",
-    "comprobante de pago",
-    "agua",
-    "alcantarillado",
-    "factura",
-  ];
-  return signals.filter(x => s.includes(x)).length >= 2;
-}
-
-
 export function hasHardScamSignalsV2(text: string): boolean {
   const raw = text || "";
   const t = raw.toLowerCase();
-
-  if (looksLikeUtilityBill(raw) && extractUrls(raw).length > 0) {
-  // Facturas reales suelen tener link de pago; no lo uses como hard-scam por sí solo
-  // (Solo se marcará scam si hay gift card/crypto, etc.)
-  // OJO: deja que legacy hard signals sigan funcionando
-}
-
 
   // 1) Keep the legacy “hard stop” signals.
   if (hasHardScamSignals(raw)) return true;
@@ -521,6 +470,62 @@ function pressureScore(t: string): number {
   return countMatches(s, pressure);
 }
 
+function looksLikeUtilityBill(s: string): boolean {
+  const t = normalizeText(s);
+
+  // Strong bill structure signals (these rarely appear in marketing offers)
+  const billSignals = [
+    "amount due",
+    "total due",
+    "balance due",
+    "due date",
+    "billing period",
+    "statement date",
+    "account number",
+    "service address",
+    "meter",
+    "usage",
+    "previous balance",
+    "current charges",
+    "payment received",
+    "remit",
+    "remittance",
+    "payment stub",
+    "water",
+    "sewer",
+    "utility bill",
+    // Spanish
+    "monto a pagar",
+    "total a pagar",
+    "saldo",
+    "fecha de vencimiento",
+    "periodo de facturacion",
+    "fecha de estado",
+    "numero de cuenta",
+    "direccion de servicio",
+    "medidor",
+    "consumo",
+    "saldo anterior",
+    "cargos actuales",
+    "pago recibido",
+    "comprobante de pago",
+    "agua",
+    "alcantarillado",
+    "factura",
+  ];
+
+  const hits = billSignals.reduce((acc, w) => acc + (t.includes(w) ? 1 : 0), 0);
+
+  // Conservative threshold: needs multiple bill-structure elements
+  return hits >= 3;
+}
+
+function utilityCategory(result: any): boolean {
+  const cat = String(result?.document_type?.category || "").toLowerCase();
+  return cat === "utility";
+}
+
+
 function offerScore(t: string): number {
   const s = normalizeText(t);
 
@@ -626,7 +631,7 @@ export function applyIntentAndPressureOverride(
     intent = "manipulative_solicitation";
   } else if (oScore >= 2 && pScore >= 2) {
     intent = "manipulative_solicitation";
-  } else if (oScore >= 2 && pScore <= 1) {
+  } else if (oScore >= 2 && pScore <= 1 && !(cat === "utility" && looksLikeUtilityBill(text))) {
     intent = "optional_offer";
   } else if (
     likelyGovOrBillCategory(cat) &&
