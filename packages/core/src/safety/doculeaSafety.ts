@@ -27,6 +27,136 @@ export function hasHardScamSignals(text: string): boolean {
 }
 
 /**
+ * V2: Detects strong scam indicators in raw text (especially link-based “pay now” scams
+ * that impersonate government/companies and use urgency + non-official domains).
+ *
+ * IMPORTANT:
+ * - This does NOT modify output by itself.
+ * - We keep legacy signals from hasHardScamSignals(), and add extra checks.
+ */
+function extractUrls(text: string): string[] {
+  const t = text || "";
+  const urls = t.match(/https?:\/\/[^ -\s)]+/gi) ?? [];
+  return urls.map((u) => u.replace(/[),.;]+$/g, ""));
+}
+
+function getHostname(url: string): string | null {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+function isOfficialNJDomain(host: string): boolean {
+  // NJ government sites are typically *.nj.gov (and nj.gov).
+  return host === "nj.gov" || host.endsWith(".nj.gov");
+}
+
+function looksLikeGovButNotGov(host: string): boolean {
+  // e.g., "nj.govnxt.help" contains ".gov" but is NOT a .gov / .nj.gov domain.
+  return host.includes(".gov") && !host.endsWith(".gov") && !host.endsWith(".nj.gov");
+}
+
+function hasPressureThreatLanguage(t: string): boolean {
+  const patterns = [
+    "final notice",
+    "last notice",
+    "payment required",
+    "pay now",
+    "due date",
+    "deadline",
+    "avoid penalties",
+    "enforcement action",
+    "enforcement actions",
+    "legal proceedings",
+    "credit reporting",
+    "adverse credit",
+    "collections",
+    "collection agency",
+    "additional fee",
+    "suspended",
+    "suspension",
+    "driver's license",
+    "drivers license",
+    "registration suspended",
+    "vehicle registration",
+  ];
+  return patterns.some((p) => t.includes(p));
+}
+
+function hasGovImpersonationSignals(t: string): boolean {
+  const patterns = [
+    "njmvc",
+    "motor vehicle",
+    "new jersey",
+    "n.j.s.a",
+    "title 39",
+    "department of motor vehicles",
+    "dmv",
+  ];
+  return patterns.some((p) => t.includes(p));
+}
+
+function missingCaseIdentifiers(t: string): boolean {
+  const claimsTraffic =
+    t.includes("traffic") || t.includes("violation") || t.includes("ticket") || t.includes("summons");
+  if (!claimsTraffic) return false;
+
+  const hasIdentifiers =
+    t.includes("ticket #") ||
+    t.includes("ticket number") ||
+    t.includes("summons #") ||
+    t.includes("summons number") ||
+    t.includes("case #") ||
+    t.includes("case number") ||
+    t.includes("municipal court") ||
+    t.includes("court") ||
+    t.includes("plate") ||
+    t.includes("license plate");
+
+  return !hasIdentifiers;
+}
+
+export function hasHardScamSignalsV2(text: string): boolean {
+  const raw = text || "";
+  const t = raw.toLowerCase();
+
+  // 1) Keep the legacy “hard stop” signals.
+  if (hasHardScamSignals(raw)) return true;
+
+  // 2) Link-based impersonation + urgency patterns (like the NJ traffic scam example).
+  const urls = extractUrls(raw);
+  const hosts = urls.map(getHostname).filter(Boolean) as string[];
+
+  const hasAnyUrl = urls.length > 0;
+  const pressure = hasPressureThreatLanguage(t);
+  const govSignals = hasGovImpersonationSignals(t);
+
+  const hasGovLookalikeDomain = hosts.some(looksLikeGovButNotGov);
+
+  const mentionsPaymentPortal = t.includes("portal") || t.includes("pay") || t.includes("payment");
+  const hasNJClaimButNoOfficialDomain =
+    govSignals && hasAnyUrl && hosts.length > 0 && !hosts.some(isOfficialNJDomain);
+
+  const hasPaymentLinkOnNonOfficialDomain =
+    mentionsPaymentPortal &&
+    hasAnyUrl &&
+    hosts.length > 0 &&
+    !hosts.some((h) => h.endsWith(".gov") || h.endsWith(".nj.gov"));
+
+  const missingIds = missingCaseIdentifiers(t);
+
+  // Trigger if we see strong combo patterns (aiming to minimize false positives).
+  if (hasGovLookalikeDomain) return true;
+  if (hasNJClaimButNoOfficialDomain && (pressure || mentionsPaymentPortal)) return true;
+  if (hasPaymentLinkOnNonOfficialDomain && (pressure || govSignals)) return true;
+  if (pressure && govSignals && missingIds && hasAnyUrl) return true;
+
+  return false;
+}
+
+/**
  * Enforces hard safety overrides on an already-valid AI result.
  * MUST ALWAYS return a DoculeaResponse.
  * DOES NOT change AI logic, only applies safety guardrails.
@@ -36,7 +166,7 @@ export function applyHardSafetyOverride(
   rawText: string,
   language: "en" | "es"
 ): DoculeaResponse {
-  if (!hasHardScamSignals(rawText)) return result;
+  if (!hasHardScamSignalsV2(rawText)) return result;
 
   // Override to scam, suspicious, strong safety steps
   return {
