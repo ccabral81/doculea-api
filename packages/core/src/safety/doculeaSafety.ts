@@ -116,7 +116,44 @@ function missingCaseIdentifiers(t: string): boolean {
 
 function looksLikeUtilityBill(t: string): boolean {
   const s = (t || "").toLowerCase();
-  const signals = ["amount due","total due","billing period","account number","meter","water","sewer","remittance"];
+  const signals = [ "amount due",
+    "total due",
+    "balance due",
+    "due date",
+    "billing period",
+    "statement date",
+    "account number",
+    "service address",
+    "meter",
+    "usage",
+    "previous balance",
+    "current charges",
+    "payment received",
+    "remit",
+    "remittance",
+    "payment stub",
+    "water",
+    "sewer",
+    "utility bill",
+    // Spanish
+    "monto a pagar",
+    "total a pagar",
+    "saldo",
+    "fecha de vencimiento",
+    "periodo de facturacion",
+    "fecha de estado",
+    "numero de cuenta",
+    "direccion de servicio",
+    "medidor",
+    "consumo",
+    "saldo anterior",
+    "cargos actuales",
+    "pago recibido",
+    "comprobante de pago",
+    "agua",
+    "alcantarillado",
+    "factura",
+  ];
   return signals.filter(x => s.includes(x)).length >= 2;
 }
 
@@ -486,48 +523,49 @@ function pressureScore(t: string): number {
 
 function offerScore(t: string): number {
   const s = normalizeText(t);
-  const offer = [
+
+  const strong = [
     "offer",
     "promotion",
     "enroll",
     "enrollment",
     "sign up",
+    "apply now",
+    "reward",
+    "cash back",
+    "you must call",
+    // Spanish strong
+    "oferta",
+    "promoción",
+    "inscríbete",
+    "inscribirse",
+    "solicita ahora",
+    "recompensas",
+    "reembolso",
+  ];
+
+  const weak = [
     "register",
     "optional",
     "program",
     "benefits",
     "terms and conditions",
-    "apply now",
     "credit card",
-    "reward",
-    "cash back",
-    // Utility supplier / switching / refund funnel
-    "third party supplier",
-    "not affiliated",
-    "electricity supplier",
-    "supply charges",
-    "remain a customer",
-    "refund id",
-    "bill credit",
-    "mail me a check",
-    "you must call",
-    // Spanish
-    "oferta",
-    "promoción",
-    "inscríbete",
-    "inscribirse",
     "registr",
     "opcional",
     "programa",
     "beneficios",
     "términos y condiciones",
-    "solicita ahora",
     "tarjeta de crédito",
-    "recompensas",
-    "reembolso",
   ];
-  return countMatches(s, offer);
+
+  const strongHits = countMatches(s, strong);
+  const weakHits = countMatches(s, weak);
+
+  // Weight strong higher; weak alone shouldn't trigger
+  return strongHits * 2 + weakHits;
 }
+
 
 function utilitySwitchSignals(t: string): boolean {
   const s = normalizeText(t);
