@@ -473,6 +473,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // ✅ Safety layers (order matters)
     result = applyHardSafetyOverride(result, trimmedText, language);
+
+    if (result?.legitimacy_assessment?.status === "suspicious") {
+  const { bucket, category } = mapOutputToBucket(result);
+  const ui_action_type = "informational";
+  return res.status(200).json({ ...result, ui_action_type, bucket, category });
+}
     result = applyGovernmentSolicitationOverride(result, trimmedText, language);
     result = applyEcommerceNormalizationOverride(result, trimmedText, language);
 

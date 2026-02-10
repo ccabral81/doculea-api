@@ -58,30 +58,26 @@ function looksLikeGovButNotGov(host: string): boolean {
   return host.includes(".gov") && !host.endsWith(".gov") && !host.endsWith(".nj.gov");
 }
 
-function hasPressureThreatLanguage(t: string): boolean {
+function hasStrongPressureThreatLanguage(t: string): boolean {
   const patterns = [
     "final notice",
     "last notice",
     "payment required",
     "pay now",
-    "due date",
-    "deadline",
     "avoid penalties",
     "enforcement action",
-    "enforcement actions",
     "legal proceedings",
     "credit reporting",
-    "adverse credit",
-    "collections",
-    "collection agency",
-    "additional fee",
+    "registration suspended",
     "suspended",
     "suspension",
-    "driver's license",
-    "drivers license",
-    "registration suspended",
-    "vehicle registration",
   ];
+  return patterns.some((p) => t.includes(p));
+}
+
+// (Opcional) si quieres conservar algo “suave” para otras reglas:
+function hasMildBillingLanguage(t: string): boolean {
+  const patterns = ["due date", "deadline", "additional fee", "late fee", "past due"];
   return patterns.some((p) => t.includes(p));
 }
 
@@ -118,9 +114,23 @@ function missingCaseIdentifiers(t: string): boolean {
   return !hasIdentifiers;
 }
 
+function looksLikeUtilityBill(t: string): boolean {
+  const s = (t || "").toLowerCase();
+  const signals = ["amount due","total due","billing period","account number","meter","water","sewer","remittance"];
+  return signals.filter(x => s.includes(x)).length >= 2;
+}
+
+
 export function hasHardScamSignalsV2(text: string): boolean {
   const raw = text || "";
   const t = raw.toLowerCase();
+
+  if (looksLikeUtilityBill(raw) && extractUrls(raw).length > 0) {
+  // Facturas reales suelen tener link de pago; no lo uses como hard-scam por sí solo
+  // (Solo se marcará scam si hay gift card/crypto, etc.)
+  // OJO: deja que legacy hard signals sigan funcionando
+}
+
 
   // 1) Keep the legacy “hard stop” signals.
   if (hasHardScamSignals(raw)) return true;
@@ -130,7 +140,7 @@ export function hasHardScamSignalsV2(text: string): boolean {
   const hosts = urls.map(getHostname).filter(Boolean) as string[];
 
   const hasAnyUrl = urls.length > 0;
-  const pressure = hasPressureThreatLanguage(t);
+  const strongpressure = hasStrongPressureThreatLanguage(t);
   const govSignals = hasGovImpersonationSignals(t);
 
   const hasGovLookalikeDomain = hosts.some(looksLikeGovButNotGov);
@@ -149,9 +159,9 @@ export function hasHardScamSignalsV2(text: string): boolean {
 
   // Trigger if we see strong combo patterns (aiming to minimize false positives).
   if (hasGovLookalikeDomain) return true;
-  if (hasNJClaimButNoOfficialDomain && (pressure || mentionsPaymentPortal)) return true;
-  if (hasPaymentLinkOnNonOfficialDomain && (pressure || govSignals)) return true;
-  if (!hasAnyUrl && pressure && govSignals && missingIds && mentionsPaymentPortal) return true;
+  if (hasNJClaimButNoOfficialDomain && (strongpressure || mentionsPaymentPortal)) return true;
+  if (hasPaymentLinkOnNonOfficialDomain && (strongpressure || govSignals)) return true;
+  if (!hasAnyUrl && strongpressure && govSignals && missingIds && mentionsPaymentPortal) return true;
 
   return false;
 }
