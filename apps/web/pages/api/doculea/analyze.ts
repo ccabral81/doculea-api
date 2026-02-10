@@ -297,6 +297,39 @@ function applyFormGuidanceOverride(result: any, rawText: string, lang: "en" | "e
 // Priority: suspicious => informational; actionable category (med/high) => action_required;
 // else deterministic offer detection on rawText + narrative.
 // -----------------------
+
+function looksLikeBillOrStatement(text: string) {
+  const t = (text || "").toLowerCase();
+
+  const billSignals = [
+    "amount due",
+    "total due",
+    "balance due",
+    "due date",
+    "billing period",
+    "statement date",
+    "account number",
+    "acct #",
+    "service address",
+    "meter",
+    "previous balance",
+    "current charges",
+    "payment received",
+    "make payment",
+    "payment stub",
+    "remit",
+    "remittance",
+    "autopay",
+    "auto pay",
+    "disconnect",
+    "past due",
+    "late fee",
+  ];
+
+  const hits = billSignals.filter((w) => t.includes(w)).length;
+  return hits >= 2; // keep it conservative
+}
+
 function deriveUiActionType(
   result: any,
   rawText: string
@@ -323,6 +356,11 @@ function deriveUiActionType(
 
   const isActionable = actionableCats.has(String(category || ""));
   const confidentEnough = catConf === "high" || catConf === "medium";
+
+    // ✅ NEW: utility bills/statements should stay action_required even if model confidence is low
+  if (String(category) === "utility" && looksLikeBillOrStatement(rawText)) {
+    return "action_required";
+  }
 
   // ✅ Priority rule: if actionable with medium/high confidence, never let offer logic override steps.
   if (isActionable && confidentEnough) return "action_required";

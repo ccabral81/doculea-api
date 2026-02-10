@@ -566,6 +566,8 @@ export default function DoculeaTestPage() {
   const [extractedText, setExtractedText] = useState<string | null>(null);
   const [showExtracted, setShowExtracted] = useState(false);
 
+  const [showScripts, setShowScripts] = useState(false);
+
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
   const libraryInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -576,7 +578,11 @@ export default function DoculeaTestPage() {
   const isNarrow = useIsNarrow(520);
 
 
+  
   useEffect(() => {
+    setShowScripts(false);
+  }, [result]);
+useEffect(() => {
     const stored = getStoredLang();
     if (stored) {
       setLang(stored);
@@ -1265,12 +1271,59 @@ export default function DoculeaTestPage() {
 
             {!hideScripts &&
               (result.suggested_scripts?.call_script || result.suggested_scripts?.email_template) && (
-                <Card title={t(lang, "scripts")}>
-                  {result.suggested_scripts?.call_script && (
-                    <CopyBlock label={t(lang, "callScript")} text={result.suggested_scripts.call_script} lang={lang} />
+                <Card>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+                    <div style={{ fontWeight: 800, fontSize: 14 }}>{t(lang, "scripts")}</div>
+                    <button
+                      onClick={() => setShowScripts((v) => !v)}
+                      style={{
+                        border: "1px solid #e5e7eb",
+                        borderRadius: 10,
+                        padding: "8px 10px",
+                        background: "white",
+                        cursor: "pointer",
+                        fontWeight: 800,
+                      }}
+                    >
+                      {showScripts ? (lang === "es" ? "Ocultar" : "Hide") : (lang === "es" ? "Ver guion completo" : "Show full script")}
+                    </button>
+                  </div>
+
+                  {!showScripts && (
+                    <div style={{ marginTop: 10, color: "#374151", fontSize: 14 }}>
+                      <div style={{ fontWeight: 800, marginBottom: 6 }}>{lang === "es" ? "Vista previa:" : "Preview:"}</div>
+
+                      {result.suggested_scripts?.call_script && (
+                        <div style={{ marginBottom: 10 }}>
+                          <div style={{ fontWeight: 800, marginBottom: 4 }}>{t(lang, "callScript")}</div>
+                          <div style={{ whiteSpace: "pre-wrap" }}>
+                            {String(result.suggested_scripts.call_script).trim().slice(0, 180)}
+                            {String(result.suggested_scripts.call_script).trim().length > 180 ? "…" : ""}
+                          </div>
+                        </div>
+                      )}
+
+                      {result.suggested_scripts?.email_template && (
+                        <div style={{ marginBottom: 0 }}>
+                          <div style={{ fontWeight: 800, marginBottom: 4 }}>{t(lang, "emailTemplate")}</div>
+                          <div style={{ whiteSpace: "pre-wrap" }}>
+                            {String(result.suggested_scripts.email_template).trim().slice(0, 180)}
+                            {String(result.suggested_scripts.email_template).trim().length > 180 ? "…" : ""}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   )}
-                  {result.suggested_scripts?.email_template && (
-                    <CopyBlock label={t(lang, "emailTemplate")} text={result.suggested_scripts.email_template} lang={lang} />
+
+                  {showScripts && (
+                    <div style={{ marginTop: 10 }}>
+                      {result.suggested_scripts?.call_script && (
+                        <CopyBlock label={t(lang, "callScript")} text={result.suggested_scripts.call_script} lang={lang} />
+                      )}
+                      {result.suggested_scripts?.email_template && (
+                        <CopyBlock label={t(lang, "emailTemplate")} text={result.suggested_scripts.email_template} lang={lang} />
+                      )}
+                    </div>
                   )}
                 </Card>
               )}
@@ -1359,3 +1412,4 @@ export default function DoculeaTestPage() {
 
   
 }
+
