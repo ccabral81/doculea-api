@@ -59,14 +59,14 @@ const COPY: Record<Lang, Record<string, string>> = {
     repeat: "Repetir",
     statusLikelyLegit: "Probablemente legítimo",
     statusUnclear: "No está claro",
-    statusSuspicious: "Sospechoso",
+    statusSuspicious: "Posible estafa detectada",
     urgencyHigh: "Alta urgencia",
     urgencyMedium: "Urgencia media",
     urgencyLow: "Baja urgencia",
     offerIntro: "Esto parece una oferta o promoción. No necesitas inscribirte. Estas cartas a veces usan urgencia para presionarte.",
     legitIntro: "Este documento parece legítimo.",
     unclearIntro: "No está claro si este documento es legítimo. Trátalo con precaución.",
-    suspiciousIntro: "Este documento parece sospechoso. No llames ni hagas clic en enlaces hasta verificarlo.",
+    suspiciousIntro: "Posible estafa detectada. No llames ni hagas clic en enlaces hasta verificarlo.",
     redFlagsSpokenIntro: "Señales de alerta importantes.",
     followStepsSuffix: "Sigue los pasos a continuación para más información."
   },
@@ -168,6 +168,20 @@ function withFollowStepsSuffix(summary: string, lang: Lang) {
   if (s.toLowerCase().includes(suffix.toLowerCase())) return s;
   return s.endsWith(".") ? `${s} ${suffix}` : `${s}. ${suffix}`;
 }
+
+function useIsNarrow(breakpoint = 520) {
+  const [isNarrow, setIsNarrow] = React.useState(false);
+
+  React.useEffect(() => {
+    const onResize = () => setIsNarrow(window.innerWidth < breakpoint);
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [breakpoint]);
+
+  return isNarrow;
+}
+
 
 // -----------------------
 // 🔊 Voice helpers (prevents “Spanglish” after idle by pinning the correct voice)
@@ -558,6 +572,9 @@ export default function DoculeaTestPage() {
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
 
   const lastProgressSpoken = useRef<Step | null>(null);
+
+  const isNarrow = useIsNarrow(520);
+
 
   useEffect(() => {
     const stored = getStoredLang();
@@ -1164,26 +1181,38 @@ export default function DoculeaTestPage() {
             placeholder={t(lang, "pastePlaceholder")}
           />
 
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 10, gap: 12 }}>
-            <div style={{ color: "#6b7280", fontSize: 12 }}>{t(lang, "minChars")}</div>
+      <div
+  style={{
+    display: "flex",
+    flexDirection: isNarrow ? "column" : "row",
+    alignItems: isNarrow ? "stretch" : "center",
+    marginTop: 10,
+    gap: 12,
+  }}
+>
+  <div style={{ color: "#6b7280", fontSize: 12 }}>
+    {t(lang, "minChars")}
+  </div>
 
-            <button
-              onClick={runFromText}
-              disabled={!canAnalyze || loading}
-              style={{
-                border: "1px solid #e5e7eb",
-                borderRadius: 12,
-                padding: "10px 14px",
-                background: !canAnalyze || loading ? "#e5e7eb" : "#111827",
-                color: !canAnalyze || loading ? "#6b7280" : "white",
-                fontWeight: 900,
-                cursor: !canAnalyze || loading ? "not-allowed" : "pointer",
-                minWidth: 140,
-              }}
-            >
-              {loading ? t(lang, "analyzing") : t(lang, "analyzeText")}
-            </button>
-          </div>
+  <button
+    onClick={runFromText}
+    disabled={!canAnalyze || loading}
+    style={{
+      width: isNarrow ? "100%" : undefined,
+      border: "1px solid #e5e7eb",
+      borderRadius: 12,
+      padding: "10px 14px",
+      background: !canAnalyze || loading ? "#e5e7eb" : "#111827",
+      color: !canAnalyze || loading ? "#6b7280" : "white",
+      fontWeight: 900,
+      cursor: !canAnalyze || loading ? "not-allowed" : "pointer",
+      minWidth: isNarrow ? undefined : 140,
+    }}
+  >
+    {loading ? t(lang, "analyzing") : t(lang, "analyzeText")}
+  </button>
+</div>
+
         </Card>
 
         {result && (
@@ -1247,7 +1276,47 @@ export default function DoculeaTestPage() {
               )}
 
             {result.safety_notes && <Card title={t(lang, "safetyNotes")}>{result.safety_notes}</Card>}
+
+
+
+
+      {isNarrow && canAnalyze && !loading && (
+  <div
+    style={{
+      position: "sticky",
+      bottom: 0,
+      zIndex: 20,
+      background: "rgba(255,255,255,0.92)",
+      backdropFilter: "blur(6px)",
+      borderTop: "1px solid #e5e7eb",
+      padding: 12,
+      marginTop: 12,
+    }}
+  >
+    <button
+      onClick={runFromText}
+      style={{
+        width: "100%",
+        border: "1px solid #e5e7eb",
+        borderRadius: 12,
+        padding: "12px 14px",
+        background: "#111827",
+        color: "white",
+        fontWeight: 900,
+        cursor: "pointer",
+      }}
+    >
+      {t(lang, "analyzeText")}
+    </button>
+  </div>
+)}
+
+
+
+
+
           </div>
+
         )}
 
   {/* Disclaimer + Footer */}
