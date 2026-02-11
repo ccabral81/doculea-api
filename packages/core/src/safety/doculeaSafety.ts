@@ -571,6 +571,262 @@ function offerScore(t: string): number {
   return strongHits * 2 + weakHits;
 }
 
+// ---------------- User-demand layer (what the doc is asking the user to do) ----------------
+
+export type UserDemand =
+  | "make_payment"
+  | "provide_information"
+  | "click_link"
+  | "take_action"
+  | "none";
+
+function hasGenericSalutation(text: string): boolean {
+  const t = normalizeText(text);
+  const generic = [
+    // English
+    "dear buyer",
+    "dear customer",
+    "dear client",
+    "dear user",
+    "dear sir",
+    "dear madam",
+    "to whom it may concern",
+    // Spanish
+    "estimado cliente",
+    "estimado usuario",
+    "estimado comprador",
+    "a quien corresponda",
+  ];
+  return generic.some((g) => t.includes(g));
+}
+
+function isLowTrustHost(host: string): boolean {
+  const h = (host || "").toLowerCase();
+  const lowTrust = [
+    "blogspot.com",
+    "wordpress.com",
+    "wixsite.com",
+    "sites.google.com",
+    "bit.ly",
+    "tinyurl.com",
+    "cutt.ly",
+    "rebrand.ly",
+    "linktr.ee",
+    "t.co",
+    "forms.gle",
+    "docs.google.com",
+  ];
+  return lowTrust.some((d) => h === d || h.endsWith(`.${d}`));
+}
+
+function hasClickDemand(text: string): boolean {
+  const t = normalizeText(text);
+  const patterns = [
+    "click",
+    "view now",
+    "open in your browser",
+    "scan",
+    "qr",
+    "join",
+    "visit",
+    "tap",
+    "link",
+    "whatsapp",
+    "telegram",
+    "wechat",
+  ];
+  return patterns.some((p) => t.includes(p));
+}
+
+function hasPaymentDemand(text: string): boolean {
+  const t = normalizeText(text);
+  const patterns = [
+    "amount due",
+    "total due",
+    "balance due",
+    "pay now",
+    "make payment",
+    "payment",
+    "invoice",
+    "service fee",
+    "processing fee",
+    "order total",
+    "make checks payable",
+    // Spanish
+    "monto a pagar",
+    "total a pagar",
+    "saldo",
+    "pagar",
+    "pago",
+    "factura",
+    "tarifa",
+    "cuota",
+  ];
+  return patterns.some((p) => t.includes(p));
+}
+
+function hasInfoDemand(text: string): boolean {
+  const t = normalizeText(text);
+  const patterns = [
+    "ssn",
+    "social security",
+    "routing number",
+    "bank account",
+    "password",
+    "verification code",
+    "one-time code",
+    "otp",
+    "upload id",
+    "driver license",
+    // Spanish
+    "seguro social",
+    "número de ruta",
+    "cuenta bancaria",
+    "contraseña",
+    "código de verificación",
+    "sube tu id",
+    "licencia de conducir",
+  ];
+  return patterns.some((p) => t.includes(p));
+}
+
+function hasProceduralActionDemand(text: string): boolean {
+  const t = normalizeText(text);
+  const patterns = [
+    "appointment",
+    "hearing",
+    "must submit",
+    "file",
+    "complete",
+    "return this form",
+    "exclude yourself",
+    // Spanish
+    "cita",
+    "audiencia",
+    "debe presentar",
+    "presentar",
+    "complete",
+    "devuelva este formulario",
+    "excluirse",
+  ];
+  return patterns.some((p) => t.includes(p));
+}
+
+export function detectUserDemand(rawText: string): UserDemand {
+  const t = String(rawText || "");
+  if (hasPaymentDemand(t)) return "make_payment";
+  if (hasInfoDemand(t)) return "provide_information";
+  const urls = extractUrls(t);
+  if (urls.length > 0 || hasClickDemand(t)) return "click_link";
+  if (hasProceduralActionDemand(t)) return "take_action";
+  return "none";
+}
+
+export function applyUserDemandOverride(
+  result: DoculeaResponse,
+  rawText: string,
+  language: "en" | "es"
+): DoculeaResponse {
+  const text = String(rawText || "");
+  const demand = detectUserDemand(text);
+
+  const next: any = { ...(result as any) };
+  (next as any).user_demand = demand;
+
+  const status = next?.legitimacy_assessment?.status;
+  if (status === "suspicious") return next as DoculeaResponse;
+
+  const urls = extractUrls(text);
+  const hosts = urls.map(getHostname).filter(Boolean) as string[];
+
+  const unverifiedLinkContext =
+    hasGenericSalutation(text) ||
+    urls.length >= 2 ||
+    hosts.some(isLowTrustHost) ||
+    hasAny(normalizeText(text), ["whatsapp", "telegram", "wechat"]);
+
+  const ensureRedFlags = () => {
+    if (!Array.isArray(next.red_flags)) next.red_flags = [];
+  };
+
+  const addSafetyNote = (note: string) => {
+    const existing = String(next.safety_notes || "").trim();
+    if (!existing) {
+      next.safety_notes = note;
+      return;
+    }
+    if (existing.toLowerCase().includes(note.toLowerCase())) return;
+    next.safety_notes = `${existing}\n\n${note}`;
+  };
+
+  if (demand === "click_link" && urls.length > 0 && unverifiedLinkContext) {
+    if (next?.legitimacy_assessment?.status === "likely_legit") {
+      next.legitimacy_assessment = {
+        status: "unclear",
+        confidence: "medium",
+        summary_reason:
+          language === "es"
+            ? "Este mensaje incluye enlaces y no hay suficientes señales para confirmar el remitente. Verifica por tu cuenta antes de hacer clic."
+            : "This message includes links and there aren’t enough signals to confirm the sender. Verify independently before clicking.",
+      };
+    }
+
+    ensureRedFlags();
+    const rf =
+      language === "es"
+        ? "Incluye enlaces de un remitente no verificado (evita hacer clic)."
+        : "Includes links from an unverified sender (avoid clicking).";
+    if (!next.red_flags.includes(rf)) next.red_flags.unshift(rf);
+
+    addSafetyNote(
+      language === "es"
+        ? "No hagas clic en enlaces/QR de mensajes no verificados. Si te interesa, busca la empresa por tu cuenta y entra al sitio/app oficial manualmente."
+        : "Do not click links/QR codes from unverified messages. If you’re interested, look up the company yourself and use the official site/app directly."
+    );
+
+    next.suggested_scripts = { call_script: null, email_template: null };
+  }
+
+  if (demand === "make_payment") {
+    addSafetyNote(
+      language === "es"
+        ? "Si necesitas pagar, hazlo solo por canales oficiales (portal oficial, tu cuenta, o un número verificado). Evita pagar a terceros o usar enlaces/QR de mensajes no verificados."
+        : "If payment is required, pay only through official channels (official portal, your account, or a verified number). Avoid third parties or links/QR codes from unverified messages."
+    );
+  }
+
+  if (demand === "provide_information") {
+    ensureRedFlags();
+    const rf =
+      language === "es"
+        ? "Solicita información sensible (por ejemplo, códigos/SSN/datos bancarios)."
+        : "Asks for sensitive information (e.g., codes/SSN/bank details).";
+    if (!next.red_flags.includes(rf)) next.red_flags.unshift(rf);
+
+    addSafetyNote(
+      language === "es"
+        ? "No compartas códigos de verificación, SSN ni datos bancarios por email/SMS. Verifica por tu cuenta en el sitio/app oficial antes de proporcionar información."
+        : "Do not share verification codes, SSN, or bank details via email/SMS. Verify independently in the official site/app before providing information."
+    );
+
+    if (next?.legitimacy_assessment?.status === "likely_legit") {
+      next.legitimacy_assessment = {
+        status: "unclear",
+        confidence: "high",
+        summary_reason:
+          language === "es"
+            ? "Pide información sensible. Aunque podría ser legítimo, es más seguro verificar por canales oficiales antes de responder."
+            : "It requests sensitive information. Even if it could be legitimate, it’s safest to verify via official channels before responding.",
+      };
+    }
+
+    next.suggested_scripts = { call_script: null, email_template: null };
+  }
+
+  return next as DoculeaResponse;
+}
+
+
 
 function utilitySwitchSignals(t: string): boolean {
   const s = normalizeText(t);

@@ -7,6 +7,7 @@
     "build:web": "cd apps/web && npm run build",
     "start:web": "cd apps/web && npm run start",
     "dev:mobile": "cd apps/mobile && npx expo start",
-    "lint": "echo \"Lint handled per app\""
+    "lint": "echo \"Lint handled per app\"",
+   "doculea:test": "node testcases/doculea/run-doculea-regression.mjs"
   }
 }

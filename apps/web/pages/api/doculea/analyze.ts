@@ -17,6 +17,7 @@ import {
   applyGovernmentSolicitationOverride,
   applyEcommerceNormalizationOverride,
   applyIntentAndPressureOverride,
+  applyUserDemandOverride,
   detectFormIntent,
 } from "../../../../../packages/core/src/safety/doculeaSafety";
 
@@ -330,16 +331,87 @@ function looksLikeBillOrStatement(text: string) {
   return hits >= 2; // keep it conservative
 }
 
+function looksLikeViewOnlyAccountNotice(text: string): boolean {
+  const t = (text || "").toLowerCase();
+
+  const viewSignals = [
+    "annual account summary",
+    "account summary is now ready",
+    "statement is ready",
+    "available in the",
+    "citi mobile",
+    "citi online",
+    "view now",
+    "see all purchases",
+    "export your summary",
+    // Spanish equivalents if needed later
+    "resumen",
+    "ya está disponible",
+    "ver ahora",
+  ];
+
+  const paySignals = [
+    "amount due",
+    "total due",
+    "balance due",
+    "minimum payment",
+    "past due",
+    "due date",
+    "late fee",
+    "make a payment",
+    "pay now",
+    // Spanish
+    "monto a pagar",
+    "total a pagar",
+    "saldo",
+    "pago mínimo",
+    "vencimiento",
+    "mora",
+    "pagar ahora",
+  ];
+
+  const dangerSignals = [
+    "account locked",
+    "suspended",
+    "restricted",
+    "fraud",
+    "unauthorized",
+    "verify your identity",
+    "your card was declined",
+    "security alert",
+    // Spanish
+    "bloqueada",
+    "suspendida",
+    "fraude",
+    "no autorizada",
+    "verifica tu identidad",
+    "alerta de seguridad",
+  ];
+
+  const hasView = viewSignals.some((s) => t.includes(s));
+  const hasPay = paySignals.some((s) => t.includes(s));
+  const hasDanger = dangerSignals.some((s) => t.includes(s));
+
+  return hasView && !hasPay && !hasDanger;
+}
+
+
 function deriveUiActionType(
   result: any,
-  rawText: string
+  rawText: string  
 ): "action_required" | "informational" | "offer" {
+
+  
   const category = result?.document_type?.category;
   const catConf = result?.document_type?.confidence; // "high" | "medium" | "low"
   const status = result?.legitimacy_assessment?.status;
 
   // If suspicious, avoid action-required flows; treat as informational/safety-first.
   if (status === "suspicious") return "informational";
+    // Exception: view-only bank/credit-card notices are informational, not action-required
+  const isBankish = category === "bank" || category === "credit_card";
+  if (isBankish && looksLikeViewOnlyAccountNotice(rawText)) return "informational";
+
 
   const actionableCats = new Set([
     "utility",
@@ -487,6 +559,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // Intent / pressure normalization (prevents “sign up / call now” harm)
     result = applyIntentAndPressureOverride(result, trimmedText, language);
+    result = applyUserDemandOverride(result, trimmedText, language);
 
     // Extra safety: avoid scripts for suspicious/unclear
     const st = result?.legitimacy_assessment?.status;

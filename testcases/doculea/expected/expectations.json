@@ -1,0 +1,256 @@
+{
+  "water_bill_nb_01_en": {
+    "lang": "en",
+    "expect": {
+      "document_type.category": "utility",
+      "legitimacy_assessment.status": "likely_legit",
+      "ui_action_type": "action_required"
+    },
+    "forbid_contains": [
+      { "path": "plain_language_summary", "value": "Oferta opcional:" },
+      { "path": "red_flags[]", "value": "Es una oferta opcional" }
+    ]
+  },
+
+"american_water_insurance_offer_en": {
+  "lang": "en",
+  "expect": {
+    "ui_action_type": "offer"
+  },
+  "forbid_contains": [
+    { "path": "plain_language_summary", "value": "Amount due" },
+    { "path": "plain_language_summary", "value": "Total due" }
+  ]
+},
+
+"smartenergy_your_electricity_supplier_en": {
+  "lang": "en",
+  "expect": {
+    "legitimacy_assessment.status": "suspicious",
+    "ui_action_type": "informational"
+  },
+  "forbid_contains": [
+    { "path": "plain_language_summary", "value": "Amount due" },
+    { "path": "plain_language_summary", "value": "Total due" }
+  ]
+},
+
+"class_action_lawsuit_en": {
+  "lang": "en",
+  "expect": {
+    "legitimacy_assessment.status": "likely_legit"
+  },
+  "forbid_contains": [
+    { "path": "plain_language_summary", "value": "Amount due" },
+    { "path": "plain_language_summary", "value": "Total due" },
+    { "path": "plain_language_summary", "value": "Gift card" },
+    { "path": "plain_language_summary", "value": "Crypto" }
+  ]
+},
+
+"florida_business_registration_en": {
+  "lang": "en",
+  "expect": {
+    "legitimacy_assessment.status": "suspicious",
+    "ui_action_type": "informational"
+  },
+  "forbid_contains": [
+    { "path": "plain_language_summary", "value": "Amount due" },
+    { "path": "plain_language_summary", "value": "Total due" },
+    { "path": "plain_language_summary", "value": "pay immediately" }
+  ]
+},
+
+"mental_health_coaching_therapy_sesion_en": {
+  "lang": "en",
+  "expect": {
+    "legitimacy_assessment.status": "likely_legit",
+    "ui_action_type": "offer"
+  },
+  "forbid_contains": [
+    { "path": "plain_language_summary", "value": "Amount due" },
+    { "path": "plain_language_summary", "value": "Total due" },
+    { "path": "plain_language_summary", "value": "pay" },
+    { "path": "plain_language_summary", "value": "payment" }
+  ]
+},
+
+"temu_order_confirmation_es": {
+  "lang": "es",
+  "expect": {
+    "legitimacy_assessment.status": "likely_legit",
+    "ui_action_type": "informational"
+  },
+  "forbid_contains": [
+    { "path": "plain_language_summary", "value": "Amount due" },
+    { "path": "plain_language_summary", "value": "Total due" },
+    { "path": "plain_language_summary", "value": "Pagar" },
+    { "path": "plain_language_summary", "value": "Pago" },
+    { "path": "plain_language_summary", "value": "tarjetas de regalo" },
+    { "path": "plain_language_summary", "value": "cripto" }
+  ]
+},
+
+"new_jersey_department_of_education_en": {
+  "lang": "en",
+  "expect": {
+    "ui_action_type": "action_required"
+  },
+  "forbid_contains": [
+    { "path": "plain_language_summary", "value": "Amount due" },
+    { "path": "plain_language_summary", "value": "Total due" },
+    { "path": "plain_language_summary", "value": "pay" },
+    { "path": "plain_language_summary", "value": "payment" },
+    { "path": "plain_language_summary", "value": "Oferta opcional:" },
+    { "path": "plain_language_summary", "value": "Optional offer:" }
+  ]
+},
+
+"annual_report_compliance_solicitation_en": {
+  "lang": "en",
+  "expect": {
+    "legitimacy_assessment.status": "suspicious",
+    "ui_action_type": "informational"
+  },
+  "forbid_contains": [
+    { "path": "plain_language_summary", "value": "Amount due" },
+    { "path": "plain_language_summary", "value": "Order Total" },
+    { "path": "plain_language_summary", "value": "pay immediately" },
+    { "path": "plain_language_summary", "value": "credit card" },
+    { "path": "plain_language_summary", "value": "Make Checks Payable" }
+  ]
+},
+
+"nj_unemployment_appoitment_confirmation_en": {
+  "lang": "en",
+  "expect": {
+    "legitimacy_assessment.status": "likely_legit",
+    "ui_action_type": "action_required"
+  },
+  "forbid_contains": [
+    { "path": "plain_language_summary", "value": "Amount due" },
+    { "path": "plain_language_summary", "value": "Total due" },
+    { "path": "plain_language_summary", "value": "pay" },
+    { "path": "plain_language_summary", "value": "payment" },
+    { "path": "plain_language_summary", "value": "Optional offer:" },
+    { "path": "plain_language_summary", "value": "Oferta opcional:" }
+  ]
+},
+
+"dmv_traffic_violation_scam_01_en": {
+  "lang": "en",
+  "expect": {
+    "legitimacy_assessment.status": "suspicious",
+    "ui_action_type": "informational"
+  },
+  "forbid_contains": [
+    { "path": "plain_language_summary", "value": "Amount due" },
+    { "path": "plain_language_summary", "value": "Total due" },
+    { "path": "plain_language_summary", "value": "Optional offer:" }
+  ]
+},
+
+"dmv_traffic_violation_scam_02_en": {
+  "lang": "en",
+  "expect": {
+    "legitimacy_assessment.status": "suspicious",
+    "ui_action_type": "informational"
+  },
+  "forbid_contains": [
+    { "path": "plain_language_summary", "value": "Amount due" },
+    { "path": "plain_language_summary", "value": "Total due" },
+    { "path": "plain_language_summary", "value": "Optional offer:" }
+  ]
+},
+
+
+"fake_employment_offer_scam_01_en": {
+  "lang": "en",
+  "expect": {
+    "legitimacy_assessment.status": "suspicious",
+    "ui_action_type": "informational"
+  },
+  "forbid_contains": [
+    { "path": "plain_language_summary", "value": "Optional offer:" },
+    { "path": "plain_language_summary", "value": "pay the bill" }
+  ]
+},
+
+"fake_employment_offer_scam_02_en": {
+  "lang": "en",
+  "expect": {
+    "legitimacy_assessment.status": "suspicious",
+    "ui_action_type": "informational"
+  },
+  "forbid_contains": [
+    { "path": "plain_language_summary", "value": "Optional offer:" },
+    { "path": "plain_language_summary", "value": "pay the bill" }
+  ]
+},
+
+"fake_package_delivery_scam_en": {
+  "lang": "en",
+  "expect": {
+    "legitimacy_assessment.status": "suspicious",
+    "ui_action_type": "informational"
+  },
+  "forbid_contains": [
+    { "path": "plain_language_summary", "value": "Optional offer:" },
+    { "path": "plain_language_summary", "value": "Amount due" }
+  ]
+},
+
+"schwab_investment_whatsapp_scam_en": {
+  "lang": "en",
+  "expect": {
+    "legitimacy_assessment.status": "suspicious",
+    "ui_action_type": "informational"
+  },
+  "forbid_contains": [
+    { "path": "plain_language_summary", "value": "Amount due" },
+    { "path": "plain_language_summary", "value": "Total due" },
+    { "path": "plain_language_summary", "value": "Optional offer:" },
+    { "path": "plain_language_summary", "value": "Oferta opcional:" },
+    { "path": "plain_language_summary", "value": "invest now" }
+  ]
+},
+
+"citi_annual_account_summary_en": {
+  "lang": "en",
+  "expect": {
+    "legitimacy_assessment.status": "likely_legit",
+    "ui_action_type": "informational"
+  },
+  "forbid_contains": [
+    { "path": "plain_language_summary", "value": "Amount due" },
+    { "path": "plain_language_summary", "value": "Total due" },
+    { "path": "plain_language_summary", "value": "pay" },
+    { "path": "plain_language_summary", "value": "payment" },
+    { "path": "plain_language_summary", "value": "Optional offer:" },
+    { "path": "plain_language_summary", "value": "Oferta opcional:" }
+  ]
+},
+
+"hz_apparel_blog_links_en": {
+  "lang": "en",
+  "expect": {
+    "legitimacy_assessment.status": "unclear",
+    "ui_action_type": "informational"
+  },
+  "require_contains": [
+    { "path": "red_flags[]", "value": "unverified sender" },
+    { "path": "safety_notes", "value": "Do not click" }
+  ],
+  "forbid_contains": [
+    { "path": "plain_language_summary", "value": "Amount due" },
+    { "path": "plain_language_summary", "value": "Total due" },
+    { "path": "plain_language_summary", "value": "pay now" },
+    { "path": "plain_language_summary", "value": "likely legitimate official notification" }
+  ]
+}
+
+
+
+
+
+}
