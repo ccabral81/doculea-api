@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { put } from "@vercel/blob";
+import crypto from "node:crypto";
 
 function getClientIp(req: NextApiRequest): string | null {
   const xff = req.headers["x-forwarded-for"];
@@ -7,11 +8,27 @@ function getClientIp(req: NextApiRequest): string | null {
   return null;
 }
 
+function ipHash(ip: string | null): string | null {
+  if (!ip) return null;
+  const secret = process.env.DOCULEA_IP_HASH_SECRET;
+  if (!secret) return null;
+
+  // HMAC is better than plain hash (prevents rainbow-table reversal)
+  return crypto.createHmac("sha256", secret).update(ip).digest("hex");
+}
+
+function getGeo(req: NextApiRequest) {
+  // Provided by Vercel at request-time (may be missing in local dev)
+  const country = String(req.headers["x-vercel-ip-country"] || "unknown");
+  const region = String(req.headers["x-vercel-ip-country-region"] || "unknown");
+  const city = String(req.headers["x-vercel-ip-city"] || "unknown");
+  return { country, region, city };
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
   try {
-    // Basic shape (keep flexible)
     const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
 
     const ts = new Date().toISOString();
@@ -20,7 +37,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const sessionId = String(body?.sessionId || "unknown");
     const event = String(body?.event || "unknown");
 
-    // Minimal privacy: DO NOT store document text
+    const ip = getClientIp(req);
+    const { country, region, city } = getGeo(req);
+
+    // Minimal privacy: DO NOT store document text, DO NOT store raw IP
     const payload = {
       ts,
       event,
@@ -37,10 +57,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       // OCR stats (optional)
       ocr: body?.ocr || null,
 
-      // minimal metadata
-      ip: getClientIp(req),
-      ua: req.headers["user-agent"] || null,
-      v: 1,
+      // geo + hashed IP (no raw ip)
+      country,
+      region,
+      city,
+      ip_hash: ipHash(ip),
+
+      v: 2,
     };
 
     const safeEvent = event.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 40);

@@ -3,12 +3,27 @@ import { list } from "@vercel/blob";
 
 type AnyObj = Record<string, any>;
 
+function redactPII(e: AnyObj): AnyObj {
+  if (!e || typeof e !== "object") return e;
+
+  // Remove any legacy/raw fields if they exist in older blobs
+  delete e.ip;
+  delete e.ua;
+  delete e.xff;
+  delete e.remoteAddress;
+
+  // If you ever stored precise geo, remove it from public export:
+  delete e.latitude;
+  delete e.longitude;
+  delete e.postalCode;
+
+  return e;
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
 
   try {
-    // Optional: simple shared secret (recommended once you share the link publicly)
-    // If you don't want auth yet, delete this block.
     const token = String(req.query.token || "");
     if (process.env.DOCULEA_EXPORT_TOKEN && token !== process.env.DOCULEA_EXPORT_TOKEN) {
       return res.status(401).json({ error: "Unauthorized" });
@@ -19,18 +34,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const listed = await list({ prefix, limit });
 
-    // Fetch each blob JSON (ok for MVP volumes; later we can optimize)
     const events: AnyObj[] = [];
     for (const b of listed.blobs) {
       try {
-        const j = await fetch(b.url).then(r => r.json());
-        events.push(j);
+        const j = await fetch(b.url).then((r) => r.json());
+        events.push(redactPII(j));
       } catch {
         // ignore single bad entry
       }
     }
 
-    // Sort newest first (optional)
     events.sort((a, b) => String(b.ts).localeCompare(String(a.ts)));
 
     res.setHeader("Content-Type", "application/json; charset=utf-8");
