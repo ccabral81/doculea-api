@@ -751,13 +751,20 @@ useEffect(() => {
     }
 
     setResult(json);
-      logEvent("analyze_success", {
-      lang,
-      source: "photo",
-    docType: json?.document_type?.category ?? null,
-    status: json?.legitimacy_assessment?.status ?? null,
-    confidence: json?.legitimacy_assessment?.confidence ?? null,
-    });  
+    
+   logEvent("analyze_success", {
+  lang,
+  source: "photo",
+  // Core classification
+  docType: json?.document_type?.category ?? null,
+  status: json?.legitimacy_assessment?.status ?? null,
+  confidence: json?.legitimacy_assessment?.confidence ?? null,
+  ui_action_type: json?.ui_action_type ?? null,
+  // Telemetry depth
+  overrides: json?.overrides ?? {},
+  doc_length: json?.trimmedText?.length ?? 0,
+});
+
     setStep("done");
 
     if (speakOn && json?.plain_language_summary) {

@@ -544,22 +544,45 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     result = renumberSteps(result);
 
     // ✅ Safety layers (order matters)
-    result = applyHardSafetyOverride(result, trimmedText, language);
+
+    const overrides = {
+  hard_safety: false,
+  gov_solicitation: false,
+  ecommerce: false,
+  intent_pressure: false,
+  form_mode: false,
+  user_demand: false,
+};
+
+  const before = JSON.stringify(result);
+result = applyHardSafetyOverride(result, trimmedText, language);
+if (JSON.stringify(result) !== before) overrides.hard_safety = true;
+
 
     if (result?.legitimacy_assessment?.status === "suspicious") {
   const { bucket, category } = mapOutputToBucket(result);
   const ui_action_type = "informational";
   return res.status(200).json({ ...result, ui_action_type, bucket, category });
 }
+
+
     result = applyGovernmentSolicitationOverride(result, trimmedText, language);
+    
+    if (JSON.stringify(result) !== before) overrides.gov_solicitation = true;
+
     result = applyEcommerceNormalizationOverride(result, trimmedText, language);
+    if (JSON.stringify(result) !== before) overrides.ecommerce = true;
 
     // Form mode (gated properly)
     result = applyFormGuidanceOverride(result as any, trimmedText, language) as DoculeaResponse;
+    if (JSON.stringify(result) !== before) overrides.form_mode = true;
 
     // Intent / pressure normalization (prevents “sign up / call now” harm)
     result = applyIntentAndPressureOverride(result, trimmedText, language);
+    if (JSON.stringify(result) !== before) overrides.intent_pressure = true;
+
     result = applyUserDemandOverride(result, trimmedText, language);
+     if (JSON.stringify(result) !== before) overrides.user_demand = true;
 
     // Extra safety: avoid scripts for suspicious/unclear
     const st = result?.legitimacy_assessment?.status;
