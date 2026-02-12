@@ -23,7 +23,9 @@ function getGeo(req: NextApiRequest) {
   const region = String(req.headers["x-vercel-ip-country-region"] || "unknown");
   const city = String(req.headers["x-vercel-ip-city"] || "unknown");
   const postalCode = String(req.headers["x-vercel-ip-postal-code"] || "unknown");
-  return { country, region, city,postalCode };
+  const latitude = String(req.headers["x-vercel-ip-latitude"] || "unknown");
+  const longitude = String(req.headers["x-vercel-ip-longitude"] || "unknown");
+  return { country, region, city,postalCode,latitude,longitude };
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -39,7 +41,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const event = String(body?.event || "unknown");
 
     const ip = getClientIp(req);
-    const { country, region, city,postalCode } = getGeo(req);
+    const { country, region, city,postalCode, latitude,longitude} = getGeo(req);
 
     // Minimal privacy: DO NOT store document text, DO NOT store raw IP
     const payload = {
@@ -63,6 +65,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       region,
       city,
       postalCode,
+      latitude,
+      longitude,
       ip_hash: ipHash(ip),
 
       v: 2,
