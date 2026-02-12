@@ -59,6 +59,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       // OCR stats (optional)
       ocr: body?.ocr || null,
+      overrides: body?.overrides ?? null,
+
 
       // geo + hashed IP (no raw ip)
       country,
