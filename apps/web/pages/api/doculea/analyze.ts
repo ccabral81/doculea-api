@@ -561,7 +561,7 @@ if (JSON.stringify(result) !== before) overrides.hard_safety = true;
     if (result?.legitimacy_assessment?.status === "suspicious") {
   const { bucket, category } = mapOutputToBucket(result);
   const ui_action_type = "informational";
-  return res.status(200).json({ ...result, ui_action_type, bucket, category });
+  return res.status(200).json({ ...result, ui_action_type, bucket, category, overrides});
 }
 
 before = JSON.stringify(result);
@@ -599,7 +599,7 @@ before = JSON.stringify(result);
 
     const { bucket, category } = mapOutputToBucket(result);
 
-    return res.status(200).json({ ...result, ui_action_type, bucket, category });
+    return res.status(200).json({ ...result, ui_action_type, bucket, category,overrides });
   } catch (err: any) {
     if (err?.message === "OpenAI request timed out") {
       return res.status(504).json({ error: "The analysis took too long. Please try again." });
