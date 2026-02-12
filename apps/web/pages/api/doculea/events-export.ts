@@ -13,9 +13,9 @@ function redactPII(e: AnyObj): AnyObj {
   delete e.remoteAddress;
 
   // If you ever stored precise geo, remove it from public export:
-  delete e.latitude;
-  delete e.longitude;
-  delete e.postalCode;
+  //delete e.latitude;
+  //delete e.longitude;
+  //delete e.postalCode;
 
   return e;
 }
