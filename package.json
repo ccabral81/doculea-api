@@ -8,6 +8,9 @@
     "start:web": "cd apps/web && npm run start",
     "dev:mobile": "cd apps/mobile && npx expo start",
     "lint": "echo \"Lint handled per app\"",
-   "doculea:test": "node testcases/doculea/run-doculea-regression.mjs"
+    "doculea:test": "node testcases/doculea/run-doculea-regression.mjs"
+  },
+  "dependencies": {
+    "next-pwa": "^5.6.0"
   }
 }

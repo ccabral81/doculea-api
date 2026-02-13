@@ -1,0 +1,27 @@
+{
+  "name": "Docu-Lea",
+  "short_name": "Docu-Lea",
+  "description": "Clarity for confusing documents.",
+  "start_url": "/doculea-test",
+  "display": "standalone",
+  "background_color": "#1E40AF",
+  "theme_color": "#1E40AF",
+  "icons": [
+    {
+      "src": "/icons/doculea-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icons/doculea-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/icons/doculea-icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
