@@ -762,6 +762,7 @@ useEffect(() => {
   ui_action_type: json?.ui_action_type ?? null,
   // Telemetry depth
   overrides: json?.overrides ?? {},
+  quality_flags: Array.isArray(json?.quality_flags) ? json.quality_flags : [],
   doc_length: json?.trimmedText?.length ?? 0,
 });
 

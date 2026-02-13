@@ -105,6 +105,50 @@ function toConfidenceEnum(v: any): "high" | "medium" | "low" {
   return "low";
 }
 
+function detectQualityFlags(result: any, rawText: string): string[] {
+  const flags: string[] = [];
+
+  const cat = String(result?.document_type?.category || "");
+  const status = String(result?.legitimacy_assessment?.status || "");
+  const ui = String((result as any)?.ui_action_type || "");
+
+  const t = (rawText || "").toLowerCase();
+
+  const hasPaySignals =
+    ["amount due", "total due", "balance due", "minimum payment", "past due", "due date", "pay now", "make a payment"]
+      .some((s) => t.includes(s)) ||
+    ["monto a pagar", "total a pagar", "saldo", "pago mínimo", "venc", "pagar ahora"]
+      .some((s) => t.includes(s));
+
+  const hasAccountDanger =
+    ["account locked", "suspended", "restricted", "fraud", "unauthorized", "verify your identity", "security alert"]
+      .some((s) => t.includes(s)) ||
+    ["bloquead", "suspend", "fraude", "no autoriz", "verifica tu identidad", "alerta de seguridad"]
+      .some((s) => t.includes(s));
+
+  const redFlagsText = Array.isArray(result?.red_flags) ? result.red_flags.join(" ").toLowerCase() : "";
+  const mentionsGiftCrypto =
+    ["gift card", "giftcard", "crypto", "bitcoin", "tarjeta de regalo", "cripto", "bitcoin"].some((s) =>
+      redFlagsText.includes(s)
+    );
+
+  // Contradictions / “should almost never happen”
+  if (cat === "utility" && ui === "offer") flags.push("utility_should_not_be_offer");
+
+  if (status === "likely_legit" && mentionsGiftCrypto) flags.push("likely_legit_with_giftcard_crypto_redflag");
+
+  // Bank/credit-card action_required without pay/danger signals
+  if ((cat === "bank" || cat === "credit_card") && ui === "action_required" && !hasPaySignals && !hasAccountDanger) {
+    flags.push("bank_action_required_without_pay_or_danger_signals");
+  }
+
+  // Suspicious but ui says action_required (your UI should usually prevent this)
+  if (status === "suspicious" && ui === "action_required") flags.push("suspicious_should_not_be_action_required");
+
+  return flags;
+}
+
+
 // -----------------------
 // Offer detection (deterministic, raw-text driven)
 // -----------------------
@@ -553,7 +597,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   form_mode: false,
   user_demand: false,
 };
-
+const quality_flags = detectQualityFlags(result as any, trimmedText);
   let before = JSON.stringify(result);
 result = applyHardSafetyOverride(result, trimmedText, language);
 if (JSON.stringify(result) !== before) overrides.hard_safety = true;
@@ -561,7 +605,7 @@ if (JSON.stringify(result) !== before) overrides.hard_safety = true;
     if (result?.legitimacy_assessment?.status === "suspicious") {
   const { bucket, category } = mapOutputToBucket(result);
   const ui_action_type = "informational";
-  return res.status(200).json({ ...result, ui_action_type, bucket, category, overrides});
+  return res.status(200).json({ ...result, ui_action_type, bucket, category, overrides, quality_flags});
 }
 
 before = JSON.stringify(result);
@@ -598,8 +642,8 @@ before = JSON.stringify(result);
     }
 
     const { bucket, category } = mapOutputToBucket(result);
+    return res.status(200).json({ ...result, ui_action_type, bucket, category,overrides, quality_flags});
 
-    return res.status(200).json({ ...result, ui_action_type, bucket, category,overrides });
   } catch (err: any) {
     if (err?.message === "OpenAI request timed out") {
       return res.status(504).json({ error: "The analysis took too long. Please try again." });
