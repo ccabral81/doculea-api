@@ -19,6 +19,10 @@ export function hasMoneyRequest(text: string): boolean {
     "urgent payment",
     "pay immediately",
     "auto debit",
+    "zelle",
+    "cashapp",
+    "venmo",
+    "cash",
   ];
 
   return patterns.some((p) => t.includes(p));

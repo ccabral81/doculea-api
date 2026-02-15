@@ -55,7 +55,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const prefix = day ? `${prefixBase}${day}/` : prefixBase;
 
     // Keep default smaller for Power BI; allow override but cap it
-    const limit = Math.min(Number(req.query.limit || 200), 1000);
+    const limit = Math.min(Number(req.query.limit || 500), 1000);
 
     // List blobs (fetch more than needed, then slice latest)
     const listed = await list({ prefix, limit: Math.min(limit * 3, 2000) });
