@@ -577,43 +577,65 @@ function utilityCategory(result: any): boolean {
 }
 
 
-function offerScore(t: string): number {
+function offerScore(t: string, docType?: string): number {
   const s = normalizeText(t);
+if (docType === "government") return 0;
+const strong = [
+  "offer",
+  "promotion",
+  "enroll",
+  "enrollment",
+  "sign up",
+  "apply now",
+  "reward",
+  "cash back",
 
-  const strong = [
-    "offer",
-    "promotion",
-    "enroll",
-    "enrollment",
-    "sign up",
-    "apply now",
-    "reward",
-    "cash back",
-    "you must call",
-    // Spanish strong
-    "oferta",
-    "promoción",
-    "inscríbete",
-    "inscribirse",
-    "solicita ahora",
-    "recompensas",
-    "reembolso",
-  ];
+  // ✅ Sales-y call-to-action phrases
+  "call to enroll",
+  "call to sign up",
+  "call to subscribe",
+  "call to activate",
+  "call to claim your reward",
+  "call to redeem",
+  "limited time offer",
+
+  // Spanish strong
+  "oferta",
+  "promoción",
+  "inscríbete",
+  "inscribirse",
+  "solicita ahora",
+  "recompensas",
+  "reembolso",
+  "llama para inscribirte",
+  "llama para activar",
+  "llama para reclamar",
+  "oferta por tiempo limitado",
+];
+
+
 
   const weak = [
-    "register",
-    "optional",
-    "program",
-    "benefits",
-    "terms and conditions",
-    "credit card",
-    "registr",
-    "opcional",
-    "programa",
-    "beneficios",
-    "términos y condiciones",
-    "tarjeta de crédito",
-  ];
+  "register",
+  "optional",
+  "terms and conditions",
+  "credit card",
+  "monthly",
+  "subscription",
+  "plan",
+  "upgrade",
+  "trial",
+  "registr",
+  "opcional",
+  "términos y condiciones",
+  "tarjeta de crédito",
+  "mensual",
+  "suscripción",
+  "plan",
+  "mejora",
+  "prueba",
+];
+
 
   const strongHits = countMatches(s, strong);
   const weakHits = countMatches(s, weak);
@@ -928,7 +950,7 @@ export function applyIntentAndPressureOverride(
   if (status === "suspicious" && hasHardScamSignals(text)) return result;
 
   const pScore = pressureScore(text);
-  const oScore = offerScore(text);
+  const oScore = offerScore(text, cat);
 
   let intent: IntentMode = "unknown";
 
@@ -938,9 +960,10 @@ export function applyIntentAndPressureOverride(
     intent = "manipulative_solicitation";
   } else if (oScore >= 2 && pScore >= 2) {
     intent = "manipulative_solicitation";
-  } else if (oScore >= 2 && pScore <= 1 && !(cat === "utility" && looksLikeUtilityBill(text))) {
-    intent = "optional_offer";
-  } else if (
+ } else if ( oScore >= 2 && pScore <= 1 && !likelyGovOrBillCategory(cat) && !(cat === "utility" && looksLikeUtilityBill(text))
+) {
+  intent = "optional_offer";
+} else if (
     likelyGovOrBillCategory(cat) &&
     pScore >= 2 &&
     hasAny(normalizeText(text), ["make checks payable", "order total", "service fee", "processing fee"])
