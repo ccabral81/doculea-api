@@ -4,8 +4,9 @@ import type { DoculeaResponse } from "../schema/doculeaSchema";
  * Detects strong scam indicators in raw text.
  * This does NOT modify output by itself.
  */
-export function hasHardScamSignals(text: string): boolean {
+export function hasMoneyRequest(text: string): boolean {
   const t = (text || "").toLowerCase();
+
   const patterns = [
     "gift card",
     "giftcard",
@@ -14,17 +15,67 @@ export function hasHardScamSignals(text: string): boolean {
     "wire transfer",
     "western union",
     "moneygram",
-    "arrest",
-    "warrant",
-    "police",
+    "send payment",
+    "urgent payment",
+    "pay immediately",
+    "auto debit",
+  ];
+
+  return patterns.some((p) => t.includes(p));
+}
+
+export function hasSensitiveInfoRequest(text: string): boolean {
+  const t = (text || "").toLowerCase();
+
+  const patterns = [
     "ssn",
     "social security",
     "verification code",
     "one-time code",
     "otp",
+    "confirm your identity",
+    "bank account number",
+    "routing number",
+    "credit card number",
+    "security code",
   ];
+
   return patterns.some((p) => t.includes(p));
 }
+
+export function hasPressureOrThreat(text: string): boolean {
+  const t = (text || "").toLowerCase();
+
+  const patterns = [
+    "arrest",
+    "warrant",
+    "police",
+    "legal action",
+    "lawsuit",
+    "account will be closed",
+    "immediately",
+    "within 24 hours",
+    "urgent action required",
+    "final notice",
+    "failure to respond",
+  ];
+
+  return patterns.some((p) => t.includes(p));
+}
+
+export function hasHardScamSignals(text: string): boolean {
+  const money = hasMoneyRequest(text);
+  const sensitive = hasSensitiveInfoRequest(text);
+  const pressure = hasPressureOrThreat(text);
+
+  // Must include pressure AND either money OR sensitive
+  if (pressure && (money || sensitive)) {
+    return true;
+  }
+
+  return false;
+}
+
 
 /**
  * V2: Detects strong scam indicators in raw text (especially link-based “pay now” scams

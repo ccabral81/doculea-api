@@ -1226,8 +1226,20 @@ useEffect(() => {
     {loading ? t(lang, "analyzing") : t(lang, "analyzeText")}
   </button>
 </div>
-
         </Card>
+
+        {(result as any)?.analysis_notice ? (
+          <div style={{ marginTop: 16, display: "grid", gridTemplateColumns: "1fr", gap: 12 }}>
+          <Card>
+        <div className="doculeaNotice" role="note" aria-live="polite">
+          <span className="doculeaNoticeIcon" aria-hidden="true">ℹ️</span>
+          <span className="doculeaNoticeText">{(result as any).analysis_notice}</span>
+        </div>
+        </Card>
+        </div>
+      ) : null}
+
+
 
         {result && (
           <div style={{ marginTop: 16, display: "grid", gridTemplateColumns: "1fr", gap: 12 }}>
