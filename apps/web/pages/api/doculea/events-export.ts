@@ -60,10 +60,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // List blobs (fetch more than needed, then slice latest)
     const listed = await list({ prefix, limit: Math.min(limit * 3, 2000) });
 
-    // Sort by uploadedAt (best for “latest events”)
-    const blobs = [...listed.blobs]
-      .sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime())
-      .slice(0, limit);
+      // Sort by uploadedAt (best for “latest events”)
+      const blobs = [...listed.blobs]
+    // pathname includes ISO timestamp -> stable newest-first
+    .sort((a, b) => b.pathname.localeCompare(a.pathname))
+    .slice(0, limit);
 
     // Fetch blobs in parallel (huge speed-up)
     const fetched = await mapWithConcurrency(blobs, 20, async (b) => {

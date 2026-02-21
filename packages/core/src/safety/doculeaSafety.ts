@@ -707,7 +707,7 @@ function hasClickDemand(text: string): boolean {
     "join",
     "visit",
     "tap",
-    "link",
+    "follow this link",
     "whatsapp",
     "telegram",
     "wechat",
@@ -810,9 +810,6 @@ export function applyUserDemandOverride(
   const next: any = { ...(result as any) };
   (next as any).user_demand = demand;
 
-  const status = next?.legitimacy_assessment?.status;
-  if (status === "suspicious") return next as DoculeaResponse;
-
   const urls = extractUrls(text);
   const hosts = urls.map(getHostname).filter(Boolean) as string[];
 
@@ -836,18 +833,8 @@ export function applyUserDemandOverride(
     next.safety_notes = `${existing}\n\n${note}`;
   };
 
+  // ✅ Click link: add warning only (no legitimacy change)
   if (demand === "click_link" && urls.length > 0 && unverifiedLinkContext) {
-    if (next?.legitimacy_assessment?.status === "likely_legit") {
-      next.legitimacy_assessment = {
-        status: "unclear",
-        confidence: "medium",
-        summary_reason:
-          language === "es"
-            ? "Este mensaje incluye enlaces y no hay suficientes señales para confirmar el remitente. Verifica por tu cuenta antes de hacer clic."
-            : "This message includes links and there aren’t enough signals to confirm the sender. Verify independently before clicking.",
-      };
-    }
-
     ensureRedFlags();
     const rf =
       language === "es"
@@ -860,10 +847,9 @@ export function applyUserDemandOverride(
         ? "No hagas clic en enlaces/QR de mensajes no verificados. Si te interesa, busca la empresa por tu cuenta y entra al sitio/app oficial manualmente."
         : "Do not click links/QR codes from unverified messages. If you’re interested, look up the company yourself and use the official site/app directly."
     );
-
-    next.suggested_scripts = { call_script: null, email_template: null };
   }
 
+  // ✅ Payment: add safety note only (no legitimacy change)
   if (demand === "make_payment") {
     addSafetyNote(
       language === "es"
@@ -872,6 +858,7 @@ export function applyUserDemandOverride(
     );
   }
 
+  // ✅ Provide info: add red flag + note only (no legitimacy change)
   if (demand === "provide_information") {
     ensureRedFlags();
     const rf =
@@ -885,23 +872,11 @@ export function applyUserDemandOverride(
         ? "No compartas códigos de verificación, SSN ni datos bancarios por email/SMS. Verifica por tu cuenta en el sitio/app oficial antes de proporcionar información."
         : "Do not share verification codes, SSN, or bank details via email/SMS. Verify independently in the official site/app before providing information."
     );
-
-    if (next?.legitimacy_assessment?.status === "likely_legit") {
-      next.legitimacy_assessment = {
-        status: "unclear",
-        confidence: "high",
-        summary_reason:
-          language === "es"
-            ? "Pide información sensible. Aunque podría ser legítimo, es más seguro verificar por canales oficiales antes de responder."
-            : "It requests sensitive information. Even if it could be legitimate, it’s safest to verify via official channels before responding.",
-      };
-    }
-
-    next.suggested_scripts = { call_script: null, email_template: null };
   }
 
   return next as DoculeaResponse;
 }
+
 
 
 

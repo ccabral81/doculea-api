@@ -26,6 +26,7 @@ export function getSessionId(): string {
 
 
 export async function logEvent(event: string, extra: Record<string, any> = {}) {
+  if (process.env.NEXT_PUBLIC_DOCULEA_DISABLE_LOGS === "1") return;
   const sessionId = getSessionId();
   try {
     await fetch("/api/doculea/events", {

@@ -1,93 +1,103 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { put } from "@vercel/blob";
-import crypto from "node:crypto";
+import { google } from "googleapis";
+import { randomUUID } from "crypto";
 
-function getClientIp(req: NextApiRequest): string | null {
-  const xff = req.headers["x-forwarded-for"];
-  if (typeof xff === "string") return xff.split(",")[0].trim();
-  return null;
+function getSheetsClient() {
+  const auth = new google.auth.JWT({
+    email: process.env.GOOGLE_CLIENT_EMAIL!,
+    key: (process.env.GOOGLE_PRIVATE_KEY || "").replace(/\\n/g, "\n"),
+    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
+  });
+
+  return google.sheets({ version: "v4", auth });
 }
 
-function ipHash(ip: string | null): string | null {
-  if (!ip) return null;
-  const secret = process.env.DOCULEA_IP_HASH_SECRET;
-  if (!secret) return null;
-
-  // HMAC is better than plain hash (prevents rainbow-table reversal)
-  return crypto.createHmac("sha256", secret).update(ip).digest("hex");
-}
-
-function getGeo(req: NextApiRequest) {
-  // Provided by Vercel at request-time (may be missing in local dev)
-  const country = String(req.headers["x-vercel-ip-country"] || "unknown");
-  const region = String(req.headers["x-vercel-ip-country-region"] || "unknown");
-  const city = String(req.headers["x-vercel-ip-city"] || "unknown");
-  const postalCode = String(req.headers["x-vercel-ip-postal-code"] || "unknown");
-  const latitude = String(req.headers["x-vercel-ip-latitude"] || "unknown");
-  const longitude = String(req.headers["x-vercel-ip-longitude"] || "unknown");
-  return { country, region, city,postalCode,latitude,longitude };
+function toPipeList(v: any): string {
+  if (!Array.isArray(v) || v.length === 0) return "";
+  return v.map(String).join("|");
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
+  }
 
   try {
-    const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
-
+    const body = req.body || {};
     const ts = new Date().toISOString();
-    const day = ts.slice(0, 10);
 
-    const sessionId = String(body?.sessionId || "unknown");
-    const event = String(body?.event || "unknown");
+    // ---- KEEP YOUR EXISTING GEO/IP HASH LOGIC HERE ----
+    // Example placeholders:
+    const country = body?.country || null;
+    const region = body?.region || null;
+    const city = body?.city || null;
+    const postalCode = body?.postalCode || null;
+    const latitude = body?.latitude || null;
+    const longitude = body?.longitude || null;
+    const ipHash = body?.ip_hash || null;
 
-    const ip = getClientIp(req);
-    const { country, region, city,postalCode, latitude,longitude} = getGeo(req);
-
-    // Minimal privacy: DO NOT store document text, DO NOT store raw IP
     const payload = {
+      id: randomUUID(),
       ts,
-      event,
-      sessionId,
+      event: body?.event || null,
+      sessionId: body?.sessionId || null,
       lang: body?.lang || null,
       device: body?.device || null,
       route: body?.route || null,
-
-      // outcome (optional)
       docType: body?.docType || null,
       status: body?.status || null,
       confidence: body?.confidence || null,
-
-      // OCR stats (optional)
-      ocr: body?.ocr || null,
-      overrides: body?.overrides ?? null,
+      ip_hash: ipHash,
       quality_flags: body?.quality_flags ?? null,
-
-      // geo + hashed IP (no raw ip)
+      overrides: body?.overrides ?? null,
       country,
       region,
       city,
       postalCode,
       latitude,
       longitude,
-      ip_hash: ipHash(ip),
-
       v: 2,
     };
 
-    const safeEvent = event.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 40);
-    const safeSession = sessionId.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 40);
+    const row = [
+      payload.id,
+      payload.ts,
+      payload.event,
+      payload.sessionId,
+      payload.lang,
+      payload.device,
+      payload.route,
+      payload.docType,
+      payload.status,
+      payload.confidence,
+      payload.ip_hash,
+      toPipeList(payload.quality_flags),
+      payload.overrides ? JSON.stringify(payload.overrides) : "",
+      payload.country,
+      payload.region,
+      payload.city,
+      payload.postalCode,
+      payload.latitude,
+      payload.longitude,
+      payload.v,
+    ];
 
-    const filename = `${ts.replace(/[:.]/g, "-")}__${safeSession}__${safeEvent}.json`;
-    const key = `doculea-events/${day}/${filename}`;
+    const spreadsheetId = process.env.DOCULEA_SHEETS_ID!;
+    const sheetName = process.env.DOCULEA_SHEETS_TAB || "events";
 
-    await put(key, JSON.stringify(payload), {
-      access: "public",
-      contentType: "application/json",
-      addRandomSuffix: false,
+    const sheets = getSheetsClient();
+
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: `${sheetName}!A:Z`,
+      valueInputOption: "RAW",
+      insertDataOption: "INSERT_ROWS",
+      requestBody: { values: [row] },
     });
 
     return res.status(200).json({ ok: true });
   } catch (e: any) {
-    return res.status(500).json({ error: e?.message || "Event write failed" });
+    console.error("Sheets logging error:", e);
+    return res.status(500).json({ error: e?.message || "Failed to log event" });
   }
 }

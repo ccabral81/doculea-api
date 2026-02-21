@@ -12,6 +12,7 @@
     "@docu-lea/core": "file:../../packages/core",
     "@vercel/blob": "^2.2.0",
     "formidable": "^3.5.0",
+    "googleapis": "^171.4.0",
     "heic2any": "^0.0.4",
     "next": "^14.0.0",
     "next-pwa": "^5.6.0",
