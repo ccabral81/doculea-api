@@ -110,6 +110,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       payload.latitude,
       payload.longitude,
       payload.v,
+      payload.ocr ? JSON.stringify(payload.ocr) : "",
     ];
 
     const spreadsheetId = process.env.DOCULEA_SHEETS_ID;
